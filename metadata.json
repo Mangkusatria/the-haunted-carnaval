@@ -1,0 +1,6 @@
+{
+  "name": "Karnaval Jacky - Circus Horror",
+  "description": "Game horor 3D sirkus malam yang super luas. Bertahan hidup bersama rekan bot AI, aktifkan generator sirkus, dan lari dari monster Jack-in-the-Box Jacky!",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
