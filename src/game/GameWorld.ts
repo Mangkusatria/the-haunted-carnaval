@@ -15,6 +15,8 @@ import {
   GameStatus,
   ChapterMode,
   DeviceMode,
+  Difficulty,
+  AchievementId,
   ObjectiveState,
   PlayerStats,
   CollectibleBox,
@@ -95,6 +97,9 @@ export class GameWorld {
 
   // Controls & Movement: PC (WASD + Mouse) & Mobile Android (Analog Joystick + Touch Look)
   public deviceMode: DeviceMode = 'PC';
+  public difficulty: Difficulty = 'NORMAL';
+  private playerKnockback = { active: false, vx: 0, vy: 0, vz: 0 };
+  private playerKnockbackOffsetY: number = 0;
   public keys = {
     forward: false,
     backward: false,
@@ -201,20 +206,44 @@ export class GameWorld {
   public nearbyMazeMap: boolean = false;
   public nearbyCheatButton: boolean = false;
   public isCheatMenuOpen: boolean = false;
+  public infiniteStaminaCheat: boolean = false;
+  public fastRunCheat: boolean = false;
   public showMazeMapOverlay: boolean = false;
+  public playerHelpedCollectBox: boolean = false;
+  public playerHelpedRepairMachine: boolean = false;
+  public playerFreedBotInPrison: boolean = false;
+  private playerMachineFailCount: number = 0;
   private botWhistleTimer: number = 25.0;
   private rescueWatchdogTimer: number = 0;
   private playerStepTimer: number = 0;
 
-  // Reward Item: Pistol Sirkus (Single-use per item, earned every victory)
+  // Reward & Shop Items (Single-use per item)
   public circusPistolCount: number = 0;
+  public monsterRadarCount: number = 0;
+  public circusGlovesCount: number = 0;
   public pistolFeedback: { textId: string; textEn: string; type: 'HIT' | 'MISS'; timer: number } | null = null;
+  public monsterRadar: {
+    active: boolean;
+    timer: number;
+    monsterName: 'JACKY' | 'JESTY';
+    distance: number;
+    zoneName: string;
+  } | null = null;
+  public carriedBot: {
+    botId: string;
+    botName: string;
+    timer: number;
+  } | null = null;
+  public nearbyCarryBot: BotCompanionState | null = null;
   private pistolTracerMesh: THREE.Mesh;
   private pistolTracerTimer: number = 0;
 
   // Callbacks to UI
   public onStateUpdate?: () => void;
   public onPistolCountChange?: (newCount: number) => void;
+  public onRadarCountChange?: (newCount: number) => void;
+  public onGlovesCountChange?: (newCount: number) => void;
+  public onAchievementUnlocked?: (id: AchievementId) => void;
   public onCheatMenuOpened?: () => void;
   public onInterrogationTriggered?: (prompt: InterrogationPrompt) => void;
   public onGameOver?: (reason: string) => void;
@@ -313,6 +342,9 @@ export class GameWorld {
     this.jacky.onScreenShake = (intensity: number) => {
       this.screenShakeIntensity = intensity;
     };
+    this.jacky.onLeapSlamLanded = (landX: number, landZ: number) => {
+      this.handleJackyLeapSlam(landX, landZ);
+    };
     this.scene.add(this.jacky.group);
 
     // 8.1 3D Leap Landing Indicator
@@ -351,15 +383,19 @@ export class GameWorld {
 
     this.scene.add(this.landingIndicatorGroup);
 
-    // 8.2 Dying Bot Tracker Beacon Beam above Jacky
-    const trackerBeamGeo = new THREE.CylinderGeometry(0.3, 0.6, 75, 16);
+    // 8.2 Dying Bot & Monster Radar Tracker Beacon Beam above Jacky (visible through walls!)
+    const trackerBeamGeo = new THREE.CylinderGeometry(0.35, 0.65, 75, 16);
     const trackerBeamMat = new THREE.MeshBasicMaterial({
       color: 0xef4444,
       transparent: true,
-      opacity: 0.7
+      opacity: 0.7,
+      depthTest: false,
+      fog: false,
+      side: THREE.DoubleSide
     });
     this.jackyBeaconBeam = new THREE.Mesh(trackerBeamGeo, trackerBeamMat);
     this.jackyBeaconBeam.position.y = 37.5;
+    this.jackyBeaconBeam.renderOrder = 998;
     this.jackyBeaconBeam.visible = false;
     this.jacky.group.add(this.jackyBeaconBeam);
 
@@ -512,6 +548,18 @@ export class GameWorld {
       // Q: Tembak Pistol Sirkus (Stun Monster sekali pakai)
       if (code === 'KeyQ' || key === 'q') {
         this.fireCircusPistol();
+        return;
+      }
+
+      // R: Aktifkan Monster Radar (Highlight monster terdekat 10 detik)
+      if (code === 'KeyR' || key === 'r') {
+        this.activateMonsterRadar();
+        return;
+      }
+
+      // T: Sarung Tangan Sirkus (Carry/Gendong teman bot terdekat 10 detik)
+      if (code === 'KeyT' || key === 't') {
+        this.toggleCarryBotGloves();
         return;
       }
 
@@ -686,6 +734,7 @@ export class GameWorld {
 
     // 2. If near a locker, ENTER locker!
     if (this.nearbyLocker && !this.nearbyLocker.isOccupied) {
+      this.releaseCarriedBot(false);
       this.stopRepairingMachine();
       this.currentLocker = this.nearbyLocker;
       this.currentLocker.isOccupied = true;
@@ -733,6 +782,8 @@ export class GameWorld {
           }
         });
         horrorAudio.playPrisonRescueUnlock();
+        this.playerFreedBotInPrison = true;
+        this.onAchievementUnlocked?.('lets_get_out');
         this.botManager.addChatMessage(
           'Player (Anda)',
           '#10b981',
@@ -797,6 +848,7 @@ export class GameWorld {
     horrorAudio.playBoxCollectChime();
 
     if (collector === 'PLAYER') {
+      this.playerHelpedCollectBox = true;
       this.botManager.addChatMessage(
         'Player (Anda)',
         '#60a5fa',
@@ -826,15 +878,18 @@ export class GameWorld {
     this.circusMap.unlockExitGates();
     this.bloodMoonMesh.visible = true;
 
-    // Shift scene background and fog to eerie blood red (still shows Giant Tent silhouette)
-    this.scene.background = new THREE.Color(0x350404);
-    this.scene.fog = new THREE.FogExp2(0x2a0303, 0.012);
+    // Shift scene background and fog to eerie blood red (darker in NIGHTMARE!)
+    const isNightmare = this.difficulty === 'NIGHTMARE';
+    this.scene.background = new THREE.Color(isNightmare ? 0x1e0101 : 0x350404);
+    this.scene.fog = new THREE.FogExp2(isNightmare ? 0x180101 : 0x2a0303, isNightmare ? 0.022 : 0.012);
 
     // Shift moon key light and ambient hemisphere to deep red
     this.moonKey.color.setHex(0xff1818);
-    this.moonKey.intensity = 1.35;
+    this.moonKey.intensity = isNightmare ? 0.55 : 1.35;
     this.hemiLight.color.setHex(0x990f0f);
     this.hemiLight.groundColor.setHex(0x330000);
+    this.hemiLight.intensity = isNightmare ? 0.22 : 0.45;
+    this.scene.environmentIntensity = isNightmare ? 0.35 : 1.0;
 
     // Apocalyptic sirens, thunderous rumble & psychotic chuckle
     horrorAudio.playBloodSkyRoar();
@@ -848,13 +903,25 @@ export class GameWorld {
       'ALERT'
     );
 
-    this.botManager.addChatMessage(
-      'Jacky (Monster)',
-      '#dc2626',
-      `HEHEHEHE... LANGIT MERAH TELAH TURUN!! TIDAK ADA LAGI TEMPAT BERSEMBUNYI!! AKU MELIHAT KALIAN SEMUA!!`,
-      `HEHEHEHE... THE BLOOD SKY HAS FALLEN!! NOWHERE TO HIDE!! I SEE EVERY SINGLE ONE OF YOU!!`,
-      'WARNING'
-    );
+    if (isNightmare && this.chapter === 'FAIRGROUND') {
+      // NIGHTMARE PANIC MODE: Jacky immediately leaps straight in front of the North Gate!
+      this.jacky.triggerImmediateLeapTo(0, -104);
+      this.botManager.addChatMessage(
+        'Jacky (Nightmare)',
+        '#a855f7',
+        `💀🔥 [NIGHTMARE] GERBANG TERBUKA?! AKU LANGSUNG MELOMPAT KE DEPAN GERBANG UTARA!! JANGAN HARAP BISA LOLOS!!`,
+        `💀🔥 [NIGHTMARE] THE GATE IS OPEN?! I'M LEAPING STRAIGHT IN FRONT OF THE NORTH GATE!! NO ONE ESCAPES!!`,
+        'PANIC'
+      );
+    } else {
+      this.botManager.addChatMessage(
+        'Jacky (Monster)',
+        '#dc2626',
+        `HEHEHEHE... LANGIT MERAH TELAH TURUN!! TIDAK ADA LAGI TEMPAT BERSEMBUNYI!! AKU MELIHAT KALIAN SEMUA!!`,
+        `HEHEHEHE... THE BLOOD SKY HAS FALLEN!! NOWHERE TO HIDE!! I SEE EVERY SINGLE ONE OF YOU!!`,
+        'WARNING'
+      );
+    }
 
     setTimeout(() => {
       this.botManager.addChatMessage(
@@ -937,6 +1004,23 @@ export class GameWorld {
       }
     }
 
+    // Monster Radar live countdown & beacon sync
+    if (this.monsterRadar && this.monsterRadar.active) {
+      this.monsterRadar.timer -= delta;
+      if (this.chapter === 'MAZE' && this.jesty) {
+        this.monsterRadar.monsterName = 'JESTY';
+        this.monsterRadar.distance = Math.hypot(this.jesty.info.x - this.player.x, this.jesty.info.z - this.player.z);
+        this.monsterRadar.zoneName = 'Labirin Sirkus';
+      } else {
+        this.monsterRadar.monsterName = 'JACKY';
+        this.monsterRadar.distance = Math.hypot(this.jacky.info.x - this.player.x, this.jacky.info.z - this.player.z);
+        this.monsterRadar.zoneName = this.circusMap.getZoneAt(this.jacky.info.x, this.jacky.info.z).nameId;
+      }
+      if (this.monsterRadar.timer <= 0) {
+        this.monsterRadar = null;
+      }
+    }
+
     // Blood Sky dynamic crimson pulse & North Gate escape check (Chapter 1)
     if (this.chapter === 'FAIRGROUND' && this.isBloodSky) {
       const bloodPulse = Math.sin(elapsed * 2.8) * 0.05;
@@ -963,6 +1047,45 @@ export class GameWorld {
       this.updatePlayerMovement(delta);
     }
 
+    // Keep bot carried via Sarung Tangan Sirkus mounted safely at player's shoulder!
+    if (this.carriedBot) {
+      const bot = this.botManager.bots.find((b) => b.id === this.carriedBot!.botId);
+      if (
+        !bot ||
+        !bot.isAlive ||
+        bot.state === 'ESCAPED' ||
+        this.player.isHiding ||
+        this.player.isImprisoned ||
+        this.player.isCarriedByJesty
+      ) {
+        this.releaseCarriedBot(false);
+      } else {
+        this.carriedBot.timer -= delta;
+        const rightX = Math.cos(this.cameraYaw);
+        const rightZ = -Math.sin(this.cameraYaw);
+        const fwdX = -Math.sin(this.cameraYaw);
+        const fwdZ = -Math.cos(this.cameraYaw);
+        bot.x = this.player.x + rightX * 0.78 - fwdX * 0.32;
+        bot.z = this.player.z + rightZ * 0.78 - fwdZ * 0.32;
+        bot.y = 0.85;
+        bot.rotationY = this.cameraYaw + Math.PI;
+        if (this.carriedBot.timer <= 0) {
+          this.releaseCarriedBot(true);
+        }
+      }
+    }
+
+    // Update Jacky Beacon visibility (Dying bot tracker OR active Monster Radar)
+    if (this.chapter === 'FAIRGROUND') {
+      const radarOn = Boolean(this.monsterRadar && this.monsterRadar.active);
+      const trackerOn = Boolean(this.jackyTracker && this.jackyTracker.active);
+      this.jackyBeaconBeam.visible = radarOn || trackerOn;
+      if (this.jackyBeaconBeam.visible) {
+        const pulse = 0.5 + Math.sin(elapsed * 14) * 0.4;
+        (this.jackyBeaconBeam.material as THREE.MeshBasicMaterial).opacity = Math.max(0.25, pulse);
+      }
+    }
+
     // 3. Update Camera & Flashlight positions with screen shake support
     this.updateCamera(delta, elapsed);
 
@@ -985,12 +1108,15 @@ export class GameWorld {
           this.botManager.bots,
           this.betrayedBotId,
           this.isBloodSky,
-          this.player.graceTimer
+          this.player.graceTimer,
+          this.difficulty
         );
 
         // Update 3D Leap Landing Indicator
         if (this.jacky.info.isLeaping) {
           this.landingIndicatorGroup.visible = true;
+          const ringScale = this.difficulty === 'HARD' || this.difficulty === 'NIGHTMARE' ? 5.2 / 3.4 : 1.0;
+          this.landingIndicatorGroup.scale.set(ringScale, 1, ringScale);
           const targetX = this.jacky.info.leapTargetX ?? this.jacky.info.x;
           const targetZ = this.jacky.info.leapTargetZ ?? this.jacky.info.z;
           this.landingIndicatorGroup.position.set(targetX, 0.05, targetZ);
@@ -1003,23 +1129,17 @@ export class GameWorld {
           this.landingIndicatorGroup.visible = false;
         }
 
-        // Update Dying Bot Jacky Location Tracker (5-second beacon)
+        // Update Dying Bot Jacky Location Tracker (5-second countdown)
         if (this.jackyTracker && this.jackyTracker.active) {
           this.jackyTracker.timer -= delta;
           this.jackyTracker.x = this.jacky.info.x;
           this.jackyTracker.z = this.jacky.info.z;
           const currentZone = this.circusMap.getZoneAt(this.jacky.info.x, this.jacky.info.z);
           this.jackyTracker.zoneName = currentZone.nameId;
-          this.jackyBeaconBeam.visible = true;
-          const pulse = 0.5 + Math.sin(elapsed * 14) * 0.4;
-          (this.jackyBeaconBeam.material as THREE.MeshBasicMaterial).opacity = Math.max(0.2, pulse);
 
           if (this.jackyTracker.timer <= 0) {
             this.jackyTracker = null;
-            this.jackyBeaconBeam.visible = false;
           }
-        } else {
-          this.jackyBeaconBeam.visible = false;
         }
 
         // Check if Jacky catches player! (NEVER catches while hiding, stunned, or airborne leaping)
@@ -1035,10 +1155,10 @@ export class GameWorld {
           this.handlePlayerCaptured();
         }
 
-        // Check if Jacky catches ANY companion bot! (Ignore while airborne leaping or stunned)
+        // Check if Jacky catches ANY companion bot! (Ignore while airborne leaping, stunned, or carried by player)
         if (!this.jacky.info.isLeaping && this.jacky.stunTimer <= 0) {
           for (const bot of this.botManager.bots) {
-            if (!bot.isAlive || bot.state === 'ESCAPED') continue;
+            if (!bot.isAlive || bot.state === 'ESCAPED' || bot.isCarriedByPlayer) continue;
             const bDist = Math.hypot(this.jacky.info.x - bot.x, this.jacky.info.z - bot.z);
             if (
               bDist < 2.4 &&
@@ -1231,7 +1351,8 @@ export class GameWorld {
               }
             }
           },
-          this.isPanicModeActive()
+          this.isPanicModeActive(),
+          this.difficulty
         );
 
         // Keep carried player tightly in Jesty's outstretched claws while walking to prison
@@ -1279,7 +1400,8 @@ export class GameWorld {
                 bot.state === 'HIDING' ||
                 bot.state === 'IMPRISONED' ||
                 bot.state === 'BEING_CARRIED' ||
-                bot.state === 'ESCAPED'
+                bot.state === 'ESCAPED' ||
+                bot.isCarriedByPlayer
               ) continue;
               const distToBot = Math.hypot(this.jesty.info.x - bot.x, this.jesty.info.z - bot.z);
               if (distToBot < 2.2) {
@@ -1355,6 +1477,7 @@ export class GameWorld {
               this.cameraYaw = Math.PI;
               this.camera.position.set(this.player.x, this.player.y, this.player.z);
               this.player.graceTimer = 6.0;
+              this.onAchievementUnlocked?.('thank_you_friend');
             }
 
             // Free any imprisoned companion bots inside cage too
@@ -1454,15 +1577,19 @@ export class GameWorld {
     return this.mazeObjectives.exitUnlocked || this.mazeObjectives.machinesFixed >= 20;
   }
 
+  public isStaminaUnlimited(): boolean {
+    return this.infiniteStaminaCheat || this.isPanicModeActive();
+  }
+
   private updatePlayerMovement(delta: number): void {
     const joyMag = Math.hypot(this.joystickInput.x, this.joystickInput.y);
     const hasJoystickMove = joyMag > 0.12;
     const isMoving = this.keys.forward || this.keys.backward || this.keys.left || this.keys.right || hasJoystickMove;
     const wantsSprint = (this.keys.sprint || this.mobileSprintActive) && isMoving && !this.player.isCrouching;
-    const panicUnlimited = this.isPanicModeActive();
+    const staminaUnlimited = this.isStaminaUnlimited();
 
-    // Stamina: Unlimited during Panic Mode (exit gates unlocked), drains normally otherwise
-    if (panicUnlimited) {
+    // Stamina: Unlimited during Panic Mode or Infinite Stamina Cheat, drains normally otherwise
+    if (staminaUnlimited) {
       this.player.stamina = 100;
       this.player.isSprinting = wantsSprint;
     } else if (wantsSprint && this.player.stamina > 5) {
@@ -1477,6 +1604,9 @@ export class GameWorld {
     let speed = 4.4; // base walk
     if (this.player.isSprinting) speed = 7.8;
     if (this.player.isCrouching) speed = 2.4;
+    if (this.fastRunCheat) {
+      speed *= 2.15;
+    }
 
     // Camera forward and right vectors projected onto the horizontal ground plane (X-Z)
     // Three.js camera faces along negative Z when yaw = 0.
@@ -1563,6 +1693,32 @@ export class GameWorld {
       this.playerStepTimer = 0.08;
     }
 
+    // Apply Hard-Mode Jacky High Jump shockwave knockback ("mental")
+    if (this.playerKnockback.active) {
+      const nextKbX = Math.max(-126, Math.min(126, this.player.x + this.playerKnockback.vx * delta));
+      const nextKbZ = Math.max(-126, Math.min(126, this.player.z + this.playerKnockback.vz * delta));
+      if (this.chapter === 'MAZE' && this.circusMaze) {
+        const bounds = this.circusMaze.getWorldBounds();
+        const cX = Math.max(bounds.minX, Math.min(bounds.maxX, nextKbX));
+        const cZ = Math.max(bounds.minZ, Math.min(bounds.maxZ, nextKbZ));
+        if (!this.circusMaze.checkCollision(cX, this.player.z, 0.7)) this.player.x = cX;
+        if (!this.circusMaze.checkCollision(this.player.x, cZ, 0.7)) this.player.z = cZ;
+      } else {
+        if (!this.circusMap.checkCollision(nextKbX, this.player.z, 0.7)) this.player.x = nextKbX;
+        if (!this.circusMap.checkCollision(this.player.x, nextKbZ, 0.7)) this.player.z = nextKbZ;
+      }
+
+      this.playerKnockbackOffsetY += this.playerKnockback.vy * delta;
+      this.playerKnockback.vy -= 22 * delta;
+      this.playerKnockback.vx *= Math.max(0, 1 - delta * 2.2);
+      this.playerKnockback.vz *= Math.max(0, 1 - delta * 2.2);
+
+      if (this.playerKnockbackOffsetY <= 0) {
+        this.playerKnockbackOffsetY = 0;
+        this.playerKnockback.active = false;
+      }
+    }
+
     // Flashlight battery subtle drain
     if (this.player.flashlightOn) {
       this.player.flashlightBattery = Math.max(0, this.player.flashlightBattery - delta * 0.35);
@@ -1592,17 +1748,17 @@ export class GameWorld {
 
     if (!this.isThirdPerson) {
       // First Person View
-      this.camera.position.set(this.player.x, this.player.y + bob, this.player.z);
+      this.camera.position.set(this.player.x, this.player.y + bob + this.playerKnockbackOffsetY, this.player.z);
       this.camera.rotation.order = 'YXZ';
       this.camera.rotation.y = this.cameraYaw;
       this.camera.rotation.x = this.cameraPitch;
 
       // Flashlight position follows camera
-      this.playerFlashlight.position.set(this.player.x, this.player.y - 0.2, this.player.z);
+      this.playerFlashlight.position.set(this.player.x, this.player.y - 0.2 + this.playerKnockbackOffsetY, this.player.z);
       const lookDist = 18;
       this.flashlightTarget.position.set(
         this.player.x - Math.sin(this.cameraYaw) * Math.cos(this.cameraPitch) * lookDist,
-        this.player.y + Math.sin(this.cameraPitch) * lookDist,
+        this.player.y + this.playerKnockbackOffsetY + Math.sin(this.cameraPitch) * lookDist,
         this.player.z - Math.cos(this.cameraYaw) * Math.cos(this.cameraPitch) * lookDist
       );
     } else {
@@ -1610,13 +1766,13 @@ export class GameWorld {
       const dist = 3.2;
       const camX = this.player.x + Math.sin(this.cameraYaw) * dist;
       const camZ = this.player.z + Math.cos(this.cameraYaw) * dist;
-      this.camera.position.set(camX, this.player.y + 1.2, camZ);
-      this.camera.lookAt(this.player.x, this.player.y + 0.8, this.player.z);
+      this.camera.position.set(camX, this.player.y + 1.2 + this.playerKnockbackOffsetY, camZ);
+      this.camera.lookAt(this.player.x, this.player.y + 0.8 + this.playerKnockbackOffsetY, this.player.z);
 
-      this.playerFlashlight.position.set(this.player.x, this.player.y + 0.8, this.player.z);
+      this.playerFlashlight.position.set(this.player.x, this.player.y + 0.8 + this.playerKnockbackOffsetY, this.player.z);
       this.flashlightTarget.position.set(
         this.player.x - Math.sin(this.cameraYaw) * 15,
-        this.player.y + 0.5,
+        this.player.y + 0.5 + this.playerKnockbackOffsetY,
         this.player.z - Math.cos(this.cameraYaw) * 15
       );
     }
@@ -1636,7 +1792,32 @@ export class GameWorld {
       this.nearbyLocker = null;
       this.nearbyBox = null;
       this.nearbyCheatButton = false;
+      this.nearbyCarryBot = null;
       return;
+    }
+
+    // Closest companion bot eligible to carry with Sarung Tangan Sirkus (within 5m)
+    if (!this.carriedBot && !this.player.isImprisoned && !this.player.isCarriedByJesty) {
+      let bestBot: BotCompanionState | null = null;
+      let bestDist = 5.0;
+      for (const bot of this.botManager.bots) {
+        if (
+          !bot.isAlive ||
+          bot.state === 'ESCAPED' ||
+          bot.state === 'IMPRISONED' ||
+          bot.state === 'BEING_CARRIED' ||
+          bot.state === 'HIDING' ||
+          bot.isCarriedByPlayer
+        ) continue;
+        const d = Math.hypot(bot.x - this.player.x, bot.z - this.player.z);
+        if (d < bestDist) {
+          bestDist = d;
+          bestBot = bot;
+        }
+      }
+      this.nearbyCarryBot = bestBot;
+    } else {
+      this.nearbyCarryBot = null;
     }
 
     // 1. Closest locker
@@ -1715,6 +1896,7 @@ export class GameWorld {
    * When caught by Jacky: Trigger Interrogation OR Game Over
    */
   private handlePlayerCaptured(): void {
+    this.releaseCarriedBot(false);
     const aliveBots = this.botManager.bots.filter(b => b.isAlive);
 
     // If companion bots are alive and random chance succeeds (75%), Jacky interrogates the player!
@@ -1774,6 +1956,7 @@ export class GameWorld {
 
     if (action === 'BETRAY') {
       // Player lives! Grace timer 16 seconds! Jacky targets that bot!
+      this.onAchievementUnlocked?.('evil_friend');
       this.betrayedBotId = targetBot.id;
       this.botManager.triggerBetrayalTarget(targetBot.id);
       this.player.health = Math.min(this.player.health, 35); // wounded
@@ -1949,6 +2132,7 @@ export class GameWorld {
         // No other targets, bot eliminated
         bot.isAlive = false;
         bot.health = 0;
+        this.recordNightmareJackyBotKill(bot.name);
         const deathZone = this.circusMap.getZoneAt(this.jacky.info.x, this.jacky.info.z);
         this.jackyTracker = {
           active: true,
@@ -1975,6 +2159,7 @@ export class GameWorld {
       // 70% Chance: Direct slash / elimination!
       bot.isAlive = false;
       bot.health = 0;
+      this.recordNightmareJackyBotKill(bot.name);
       const deathZone = this.circusMap.getZoneAt(this.jacky.info.x, this.jacky.info.z);
       this.jackyTracker = {
         active: true,
@@ -2001,6 +2186,104 @@ export class GameWorld {
       this.jacky.info.targetBotId = null;
       this.jacky.info.state = 'PATROL';
     }
+  }
+
+  private recordNightmareJackyBotKill(botName: string): void {
+    const kills = this.jacky.recordBotKill();
+    if (this.difficulty === 'NIGHTMARE') {
+      this.botManager.addChatMessage(
+        'Jacky (Nightmare)',
+        '#c084fc',
+        `💀⚡ [NIGHTMARE] Jacky membunuh ${botName}! Kecepatan lari Jacky meningkat (+${kills}x)!`,
+        `💀⚡ [NIGHTMARE] Jacky killed ${botName}! Jacky's speed increased (+${kills}x)!`,
+        'WARNING'
+      );
+    }
+  }
+
+  /**
+   * HARD & NIGHTMARE Mode: When Jacky lands from a High Jump, only the Player or Companion Bots standing
+   * inside Jacky's red landing indicator (radius 5.2m) are flung outward & upward ("mental")!
+   */
+  private handleJackyLeapSlam(landX: number, landZ: number): void {
+    if ((this.difficulty !== 'HARD' && this.difficulty !== 'NIGHTMARE') || this.chapter !== 'FAIRGROUND') return;
+
+    const slamRadius = 5.2;
+
+    // 1. Check Player inside landing indicator
+    if (!this.player.isHiding && !this.player.isImprisoned) {
+      const dx = this.player.x - landX;
+      const dz = this.player.z - landZ;
+      const dist = Math.hypot(dx, dz);
+
+      if (dist <= slamRadius) {
+        let dirX = 0;
+        let dirZ = 0;
+        if (dist > 0.1) {
+          dirX = dx / dist;
+          dirZ = dz / dist;
+        } else {
+          const randAngle = Math.random() * Math.PI * 2;
+          dirX = Math.cos(randAngle);
+          dirZ = Math.sin(randAngle);
+        }
+
+        this.playerKnockback = {
+          active: true,
+          vx: dirX * 19.5,
+          vy: 7.8,
+          vz: dirZ * 19.5
+        };
+        this.playerKnockbackOffsetY = 0.2;
+        this.player.graceTimer = Math.max(this.player.graceTimer, 1.8);
+        this.screenShakeIntensity = Math.max(this.screenShakeIntensity, 0.85);
+        this.player.health = Math.max(0, this.player.health - 25);
+        this.onAchievementUnlocked?.('ouch_so_painful');
+
+        this.botManager.addChatMessage(
+          'Sistem Sirkus',
+          '#ef4444',
+          '💥 GELOMBANG KEJUT JACKY! Kamu berada di lingkaran merah dan terpental mental! (-25 HP)',
+          '💥 JACKY SLAM SHOCKWAVE! You were inside the red ring and got flung away! (-25 HP)',
+          'PANIC'
+        );
+
+        if (this.player.health <= 0) {
+          this.gameStatus = 'GAMEOVER';
+          horrorAudio.playJackyJumpscare();
+          if (this.onGameOver) {
+            this.onGameOver('Gelombang kejut High Jump Jacky menghantam dan melemparkanmu hingga tewas!');
+          }
+          return;
+        }
+      }
+    }
+
+    // 2. Check Companion Bots inside landing indicator (ONLY bots hit by Jacky's slam!)
+    this.botManager.applyJackySlamKnockback(landX, landZ, slamRadius, (deadBot) => {
+      this.recordNightmareJackyBotKill(deadBot.name);
+      const deathZone = this.circusMap.getZoneAt(this.jacky.info.x, this.jacky.info.z);
+      this.jackyTracker = {
+        active: true,
+        timer: 5.0,
+        botName: deadBot.name,
+        zoneName: deathZone.nameId,
+        x: this.jacky.info.x,
+        z: this.jacky.info.z
+      };
+      horrorAudio.playTrackingRadioBeep();
+      horrorAudio.playBotScream();
+      this.botManager.addChatMessage(
+        `${deadBot.name} (Radio Sekarat)`,
+        '#ef4444',
+        `💥 *BRAK!!* "${deadBot.name.toUpperCase()} TERPENTAL HIGH JUMP JACKY DI ${deathZone.nameId.toUpperCase()}!"`,
+        `💥 *CRASH!!* "${deadBot.name.toUpperCase()} WAS FLUNG BY JACKY'S HIGH JUMP AT ${deathZone.nameEn.toUpperCase()}!"`,
+        'PANIC'
+      );
+      if (this.betrayedBotId === deadBot.id) {
+        this.betrayedBotId = null;
+      }
+    });
   }
 
   /**
@@ -2037,6 +2320,7 @@ export class GameWorld {
     const hit = deg >= start - 6 && deg <= end + 6;
 
     if (hit) {
+      this.playerHelpedRepairMachine = true;
       machine.progress = Math.min(100, machine.progress + 22);
       horrorAudio.playSkillCheckSuccess();
       this.skillCheck.active = false;
@@ -2064,6 +2348,11 @@ export class GameWorld {
     this.skillCheck.feedbackText = 'GAGAL KALIBRASI! JESTY MENDENGAR MESIN!';
     this.skillCheck.feedbackType = 'FAIL';
     this.skillCheck.feedbackTimer = 2.8;
+
+    this.playerMachineFailCount++;
+    if (this.playerMachineFailCount >= 3) {
+      this.onAchievementUnlocked?.('bad_job');
+    }
 
     // Alert Jesty to rush directly to this failed machine!
     this.jesty?.investigateMachineFailure(machine.x, machine.z);
@@ -2094,6 +2383,9 @@ export class GameWorld {
 
     const machine = this.circusMaze.mazeMachines.find(m => m.id === machineId);
     const isPlayer = fixer === 'PLAYER';
+    if (isPlayer) {
+      this.playerHelpedRepairMachine = true;
+    }
     const sender = isPlayer ? 'Player (Anda)' : fixer;
     const color = isPlayer ? '#10b981' : (this.botManager.bots.find(b => b.name === fixer)?.color || '#38bdf8');
     this.botManager.addChatMessage(
@@ -2174,14 +2466,25 @@ export class GameWorld {
     this.nearbyMazeMap = false;
     this.nearbyCheatButton = false;
     this.isCheatMenuOpen = false;
+    this.infiniteStaminaCheat = false;
+    this.fastRunCheat = false;
     this.showMazeMapOverlay = false;
+    this.playerHelpedCollectBox = false;
+    this.playerHelpedRepairMachine = false;
+    this.playerFreedBotInPrison = false;
+    this.playerMachineFailCount = 0;
     this.activeInterrogation = null;
     this.betrayedBotId = null;
     this.betrayalWarning = null;
     this.jackyTracker = null;
     this.jestyTracker = null;
     this.screenShakeIntensity = 0;
+    this.playerKnockback = { active: false, vx: 0, vy: 0, vz: 0 };
+    this.playerKnockbackOffsetY = 0;
     this.pistolFeedback = null;
+    this.monsterRadar = null;
+    this.releaseCarriedBot(false);
+    this.nearbyCarryBot = null;
     this.pistolTracerTimer = 0;
     this.pistolTracerMesh.visible = false;
     this.jackyBeaconBeam.visible = false;
@@ -2228,21 +2531,13 @@ export class GameWorld {
       }
     });
 
-    // Reset Blood Sky & Environment (density 0.0085 keeps Giant Labyrinth Tent visible far North!)
+    // Reset Blood Sky & Environment according to selected difficulty (NIGHTMARE is pitch dark!)
     this.isBloodSky = false;
     this.bloodMoonMesh.visible = false;
-    this.scene.background = new THREE.Color(0x06080e);
-    this.scene.fog = new THREE.FogExp2(0x080a14, 0.0085);
-    this.scene.environmentIntensity = 1.0;
-    this.renderer.toneMappingExposure = 1.05;
-    this.moonKey.color.setHex(0x7088b0);
-    this.moonKey.intensity = 0.7;
-    this.hemiLight.color.setHex(0x1a2638);
-    this.hemiLight.groundColor.setHex(0x0d0d12);
-    this.hemiLight.intensity = 0.45;
+    this.applyFairgroundAtmosphere();
     this.circusMap.resetExitGates();
 
-    this.jacky.resetToPatrol(0, 0);
+    this.jacky.resetToPatrol(0, 0, this.difficulty);
     this.botManager.spawnBots(botCount);
 
     if (this.circusMaze) {
@@ -2263,6 +2558,8 @@ export class GameWorld {
    * Triggers the Chapter 1 Escape & Getaway Car Ambush Cutscene
    */
   public triggerCarCutscene(): void {
+    this.releaseCarriedBot(false);
+    this.monsterRadar = null;
     horrorAudio.setMazeSilentMode(true);
     this.gameStatus = 'CAR_CUTSCENE';
     horrorAudio.startCarDriving();
@@ -2278,6 +2575,11 @@ export class GameWorld {
    * Triggers the Chapter 2 Maze Finale Escape Cutscene (start car -> Jesty chases -> ram Jesty lifeless -> escape!)
    */
   public triggerMazeEscapeCutscene(): void {
+    this.releaseCarriedBot(false);
+    this.monsterRadar = null;
+    if (this.prisonCage.imprisonedBotIds.length > 0) {
+      this.onAchievementUnlocked?.('dont_leave_me');
+    }
     horrorAudio.stopMazeEscapeSiren();
     horrorAudio.setMazeSilentMode(true);
     this.gameStatus = 'MAZE_ESCAPE_CUTSCENE';
@@ -2297,6 +2599,8 @@ export class GameWorld {
    * Physically located at z = -280 inside the Giant Circus Tent!
    */
   public startCircusMaze(): void {
+    this.releaseCarriedBot(false);
+    this.monsterRadar = null;
     horrorAudio.stopCarDriving();
     horrorAudio.stopMazeEscapeSiren();
     horrorAudio.setMazeSilentMode(true);
@@ -2378,6 +2682,9 @@ export class GameWorld {
     this.skillCheck.feedbackText = null;
     this.somethingComingTimer = 0;
     this.somethingComingCooldown = 0;
+    this.playerMachineFailCount = 0;
+    this.playerKnockback = { active: false, vx: 0, vy: 0, vz: 0 };
+    this.playerKnockbackOffsetY = 0;
     this.pistolFeedback = null;
     this.pistolTracerTimer = 0;
     this.pistolTracerMesh.visible = false;
@@ -2600,6 +2907,7 @@ export class GameWorld {
 
     if (sight.hit) {
       horrorAudio.playMonsterStunned();
+      this.onAchievementUnlocked?.('first_blood');
       if (this.chapter === 'MAZE' && this.jesty) {
         if (this.player.isCarriedByJesty) {
           this.player.isCarriedByJesty = false;
@@ -2656,6 +2964,131 @@ export class GameWorld {
   }
 
   /**
+   * Activates Single-Use Monster Radar ([R]): highlights nearest monster (Jacky or Jesty) for 10 seconds
+   */
+  public activateMonsterRadar(): void {
+    if (this.gameStatus !== 'PLAYING' && this.gameStatus !== 'MAZE_PLAYING') return;
+    if (this.monsterRadarCount <= 0) return;
+    if (this.player.isHiding || this.player.isImprisoned) return;
+
+    this.monsterRadarCount = Math.max(0, this.monsterRadarCount - 1);
+    this.onRadarCountChange?.(this.monsterRadarCount);
+    horrorAudio.playTrackingRadioBeep();
+
+    if (this.chapter === 'MAZE' && this.jesty) {
+      const dist = Math.hypot(this.jesty.info.x - this.player.x, this.jesty.info.z - this.player.z);
+      this.jesty.setRevealed(10.0);
+      this.monsterRadar = {
+        active: true,
+        timer: 10.0,
+        monsterName: 'JESTY',
+        distance: dist,
+        zoneName: 'Labirin Sirkus'
+      };
+    } else {
+      const dist = Math.hypot(this.jacky.info.x - this.player.x, this.jacky.info.z - this.player.z);
+      const zone = this.circusMap.getZoneAt(this.jacky.info.x, this.jacky.info.z).nameId;
+      this.monsterRadar = {
+        active: true,
+        timer: 10.0,
+        monsterName: 'JACKY',
+        distance: dist,
+        zoneName: zone
+      };
+      this.jackyBeaconBeam.visible = true;
+    }
+
+    this.botManager.addChatMessage(
+      'Monster Radar',
+      '#f43f5e',
+      `📡 RADAR MONSTER AKTIF 10 DETIK! Posisi ${this.monsterRadar.monsterName} tersorot tembus dinding (${this.monsterRadar.distance.toFixed(0)}m)!`,
+      `📡 MONSTER RADAR ACTIVE FOR 10s! ${this.monsterRadar.monsterName} highlighted through walls (${this.monsterRadar.distance.toFixed(0)}m)!`,
+      'INFO'
+    );
+    this.onStateUpdate?.();
+  }
+
+  /**
+   * Activates Single-Use Sarung Tangan Sirkus ([T]) to carry ("gendong") nearest companion bot safely for 10 seconds
+   */
+  public toggleCarryBotGloves(): void {
+    if (this.gameStatus !== 'PLAYING' && this.gameStatus !== 'MAZE_PLAYING') return;
+
+    if (this.carriedBot) {
+      this.releaseCarriedBot(false);
+      this.onStateUpdate?.();
+      return;
+    }
+
+    if (this.circusGlovesCount <= 0) return;
+    if (this.player.isHiding || this.player.isImprisoned || this.player.isCarriedByJesty) return;
+
+    this.checkInteractiveProximity();
+    const targetBot = this.nearbyCarryBot;
+    if (!targetBot) return;
+
+    this.circusGlovesCount = Math.max(0, this.circusGlovesCount - 1);
+    this.onGlovesCountChange?.(this.circusGlovesCount);
+
+    targetBot.isCarriedByPlayer = true;
+    targetBot.state = 'FOLLOWING';
+    targetBot.targetMachineId = null;
+    this.carriedBot = {
+      botId: targetBot.id,
+      botName: targetBot.name,
+      timer: 10.0
+    };
+    this.nearbyCarryBot = null;
+
+    horrorAudio.playBoxCollectChime();
+    this.botManager.addChatMessage(
+      targetBot.name,
+      targetBot.color,
+      `🧤 "Whoa! Makasih udah menggendongku pakai Sarung Tangan Sirkus! Aman dari monster selama 10 detik!"`,
+      `🧤 "Whoa! Thanks for carrying me with the Circus Gloves! Safe from monsters for 10s!"`,
+      'INFO'
+    );
+    this.onStateUpdate?.();
+  }
+
+  public releaseCarriedBot(expired: boolean = false): void {
+    if (!this.carriedBot) return;
+    const { botId, botName } = this.carriedBot;
+    const bot = this.botManager.bots.find((b) => b.id === botId);
+    if (bot) {
+      bot.isCarriedByPlayer = false;
+      bot.y = 0;
+      bot.state = 'SEARCHING';
+      bot.hideCooldown = 3.0;
+      // Place bot safely nearby where player isn't colliding into walls
+      const rightX = Math.cos(this.cameraYaw);
+      const rightZ = -Math.sin(this.cameraYaw);
+      const dropX = this.player.x + rightX * 1.1;
+      const dropZ = this.player.z + rightZ * 1.1;
+      const blocked = this.chapter === 'MAZE' && this.circusMaze
+        ? this.circusMaze.checkCollision(dropX, dropZ, 0.45)
+        : this.circusMap.checkCollision(dropX, dropZ, 0.45);
+      if (!blocked) {
+        bot.x = dropX;
+        bot.z = dropZ;
+      } else {
+        bot.x = this.player.x;
+        bot.z = this.player.z;
+      }
+    }
+    this.carriedBot = null;
+    if (expired && bot && bot.isAlive) {
+      this.botManager.addChatMessage(
+        botName,
+        bot.color,
+        `🧤 Durasi gendong 10 detik selesai — aku turun di dekatmu ya!`,
+        `🧤 10s carry finished — hopping down right beside you!`,
+        'INFO'
+      );
+    }
+  }
+
+  /**
    * Cheat Option 3: Immediately trigger Panic Mode (all objectives ready, exit unlocked, red sky/inferno, unlimited stamina)
    */
   public activatePanicModeCheat(): void {
@@ -2684,11 +3117,78 @@ export class GameWorld {
     } else if (this.chapter === 'MAZE' && this.circusMaze) {
       this.circusMaze.mazeMachines.forEach((m) => {
         if (!m.fixed) {
-          this.completeMazeMachine(m.id, 'PLAYER');
+          this.completeMazeMachine(m.id, 'CHEAT');
         }
       });
       this.player.stamina = 100;
     }
+    this.onStateUpdate?.();
+  }
+
+  public setDifficulty(diff: Difficulty): void {
+    this.difficulty = diff;
+    if (this.chapter === 'FAIRGROUND' && !this.isBloodSky) {
+      this.applyFairgroundAtmosphere();
+    }
+  }
+
+  public applyFairgroundAtmosphere(): void {
+    if (this.difficulty === 'NIGHTMARE') {
+      // NIGHTMARE Mode: Pitch-dark eerie Jacky Carnival!
+      this.scene.background = new THREE.Color(0x020205);
+      this.scene.fog = new THREE.FogExp2(0x030307, 0.024);
+      this.scene.environmentIntensity = 0.22;
+      this.renderer.toneMappingExposure = 0.72;
+      this.moonKey.color.setHex(0x28324b);
+      this.moonKey.intensity = 0.14;
+      this.hemiLight.color.setHex(0x070912);
+      this.hemiLight.groundColor.setHex(0x020204);
+      this.hemiLight.intensity = 0.12;
+    } else {
+      this.scene.background = new THREE.Color(0x06080e);
+      this.scene.fog = new THREE.FogExp2(0x080a14, 0.0085);
+      this.scene.environmentIntensity = 1.0;
+      this.renderer.toneMappingExposure = 1.05;
+      this.moonKey.color.setHex(0x7088b0);
+      this.moonKey.intensity = 0.7;
+      this.hemiLight.color.setHex(0x1a2638);
+      this.hemiLight.groundColor.setHex(0x0d0d12);
+      this.hemiLight.intensity = 0.45;
+    }
+  }
+
+  /**
+   * Cheat Option 4: Enable Infinite Stamina until the game ends (persists across Chapter 1 & Chapter 2!)
+   */
+  public activateInfiniteStaminaCheat(): void {
+    this.infiniteStaminaCheat = true;
+    this.player.stamina = 100;
+    this.botManager.addChatMessage(
+      'Cheat System',
+      '#34d399',
+      '😏⚡ [CHEAT] INFINITE STAMINA SAMPAI TAMAT AKTIF! Berlaku di Chapter 1 & Chapter 2!',
+      '😏⚡ [CHEAT] INFINITE STAMINA UNTIL VICTORY ACTIVATED! Persists across Chapter 1 & Chapter 2!',
+      'INFO'
+    );
+    this.onStateUpdate?.();
+  }
+
+  /**
+   * Cheat Option 5: Toggle Lari Cepat (Fast Run 2.15x speed boost) across Chapter 1 & Chapter 2!
+   */
+  public toggleFastRunCheat(): void {
+    this.fastRunCheat = !this.fastRunCheat;
+    this.botManager.addChatMessage(
+      'Cheat System',
+      '#f97316',
+      this.fastRunCheat
+        ? '😏💨 [CHEAT] LARI CEPAT AKTIF! Kecepatan gerak kamu meningkat 2X lebih kencang!'
+        : '😏💨 [CHEAT] LARI CEPAT DIMATIKAN. Kecepatan kembali normal.',
+      this.fastRunCheat
+        ? '😏💨 [CHEAT] FAST RUN ENABLED! Your movement speed is boosted 2X!'
+        : '😏💨 [CHEAT] FAST RUN DISABLED. Speed returned to normal.',
+      'INFO'
+    );
     this.onStateUpdate?.();
   }
 
@@ -2729,6 +3229,8 @@ export class GameWorld {
       this.cameraYaw = 0;
     }
     this.player.y = 1.7;
+    this.playerKnockback = { active: false, vx: 0, vy: 0, vz: 0 };
+    this.playerKnockbackOffsetY = 0;
     this.cameraPitch = 0;
     this.camera.position.set(this.player.x, this.player.y, this.player.z);
 
@@ -2768,6 +3270,8 @@ export class GameWorld {
     this.betrayalWarning = null;
     this.jackyTracker = null;
     this.jestyTracker = null;
+    this.monsterRadar = null;
+    this.releaseCarriedBot(false);
     this.screenShakeIntensity = 0;
     if (this.jackyBeaconBeam) this.jackyBeaconBeam.visible = false;
     if (this.landingIndicatorGroup) this.landingIndicatorGroup.visible = false;

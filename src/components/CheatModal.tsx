@@ -10,14 +10,19 @@
 
 import React, { useEffect, useState } from 'react';
 import { Language } from '../types';
-import { Crosshair, FastForward, Flame, X, Sparkles, Lock, KeyRound } from 'lucide-react';
+import { Crosshair, FastForward, Flame, X, Sparkles, Lock, KeyRound, Zap, Wind } from 'lucide-react';
 
 interface Props {
   language: Language;
   circusPistolCount: number;
+  infiniteStaminaActive: boolean;
+  fastRunActive: boolean;
   onGivePistol: () => void;
   onSkipChapter1: () => void;
   onActivatePanicMode: () => void;
+  onActivateInfiniteStamina: () => void;
+  onToggleFastRun: () => void;
+  onDeveloperUnlocked?: () => void;
   onClose: () => void;
 }
 
@@ -27,9 +32,14 @@ const DEV_SESSION_KEY = 'jacky_dev_cheat_unlocked';
 export const CheatModal: React.FC<Props> = ({
   language,
   circusPistolCount,
+  infiniteStaminaActive,
+  fastRunActive,
   onGivePistol,
   onSkipChapter1,
   onActivatePanicMode,
+  onActivateInfiniteStamina,
+  onToggleFastRun,
+  onDeveloperUnlocked,
   onClose
 }) => {
   const isId = language === 'id';
@@ -53,6 +63,7 @@ export const CheatModal: React.FC<Props> = ({
     if (codeInput.trim().toLowerCase() === DEVELOPER_CODE) {
       setIsUnlocked(true);
       setCodeError(false);
+      onDeveloperUnlocked?.();
       try {
         sessionStorage.setItem(DEV_SESSION_KEY, '1');
       } catch {}
@@ -150,8 +161,8 @@ export const CheatModal: React.FC<Props> = ({
               </h2>
               <p className="text-xs text-stone-400 mt-1">
                 {isId
-                  ? 'Akses developer terverifikasi! Pilih salah satu dari 3 opsi cheat:'
-                  : 'Developer access verified! Choose any of the 3 cheat options:'}
+                  ? 'Akses developer terverifikasi! Pilih salah satu dari 5 opsi cheat:'
+                  : 'Developer access verified! Choose any of the 5 cheat options:'}
               </p>
             </div>
 
@@ -229,6 +240,78 @@ export const CheatModal: React.FC<Props> = ({
                 </div>
                 <span className="px-2 py-1 rounded-md bg-red-500/20 border border-red-400 text-red-300 font-mono font-bold text-[10px] shrink-0">
                   PANIC
+                </span>
+              </button>
+
+              {/* Option 4: Infinite Stamina Until Victory */}
+              <button
+                type="button"
+                onClick={onActivateInfiniteStamina}
+                className={`w-full p-3.5 rounded-xl border-2 text-left flex items-center justify-between gap-3 transition-all active:scale-95 cursor-pointer shadow-lg ${
+                  infiniteStaminaActive
+                    ? 'bg-emerald-950/90 border-emerald-400'
+                    : 'bg-emerald-950/65 hover:bg-emerald-900/80 border-emerald-500/80'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-lg bg-emerald-500/20 border border-emerald-400 text-emerald-300">
+                    <Zap className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="font-extrabold text-sm text-emerald-200">
+                      {isId ? '4. Infinite Stamina Sampai Tamat' : '4. Infinite Stamina Until Victory'}
+                    </div>
+                    <div className="text-[11px] text-emerald-100/75">
+                      {infiniteStaminaActive
+                        ? (isId ? '✅ Sudah aktif! Stamina ∞ di Chapter 1 & Chapter 2.' : '✅ Active! ∞ Stamina in Chapter 1 & Chapter 2.')
+                        : (isId ? 'Stamina tidak akan berkurang sampai menang tamat!' : 'Stamina stays infinite all the way until victory!')}
+                    </div>
+                  </div>
+                </div>
+                <span
+                  className={`px-2 py-1 rounded-md font-mono font-black text-[10px] shrink-0 border ${
+                    infiniteStaminaActive
+                      ? 'bg-emerald-400 text-stone-950 border-emerald-200'
+                      : 'bg-emerald-500/20 border-emerald-400 text-emerald-300'
+                  }`}
+                >
+                  {infiniteStaminaActive ? 'AKTIF ✓' : '∞ STM'}
+                </span>
+              </button>
+
+              {/* Option 5: Lari Cepat (Fast Run 2X Speed) */}
+              <button
+                type="button"
+                onClick={onToggleFastRun}
+                className={`w-full p-3.5 rounded-xl border-2 text-left flex items-center justify-between gap-3 transition-all active:scale-95 cursor-pointer shadow-lg ${
+                  fastRunActive
+                    ? 'bg-orange-950/90 border-orange-400'
+                    : 'bg-orange-950/65 hover:bg-orange-900/80 border-orange-500/80'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-lg bg-orange-500/20 border border-orange-400 text-orange-300">
+                    <Wind className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="font-extrabold text-sm text-orange-200">
+                      {isId ? '5. Lari Cepat (Super Speed)' : '5. Fast Run (Super Speed)'}
+                    </div>
+                    <div className="text-[11px] text-orange-100/75">
+                      {fastRunActive
+                        ? (isId ? '✅ Aktif! Kecepatan gerak 2X lebih cepat (klik untuk matikan).' : '✅ Active! 2X faster movement speed (click to toggle off).')
+                        : (isId ? 'Percepat kecepatan jalan & lari pemain hingga 2X lipat!' : 'Boost player walking & sprint speed by over 2X!')}
+                    </div>
+                  </div>
+                </div>
+                <span
+                  className={`px-2 py-1 rounded-md font-mono font-black text-[10px] shrink-0 border ${
+                    fastRunActive
+                      ? 'bg-orange-400 text-stone-950 border-orange-200'
+                      : 'bg-orange-500/20 border-orange-400 text-orange-300'
+                  }`}
+                >
+                  {fastRunActive ? 'AKTIF ✓' : '2X SPD'}
                 </span>
               </button>
             </div>

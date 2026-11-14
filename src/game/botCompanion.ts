@@ -79,6 +79,7 @@ export class BotManager {
   private botLastPos: { x: number; z: number }[] = [];
   private botStuckTimers: number[] = [];
   private botAvoidMachineId: (number | null)[] = [];
+  private botKnockbacks: { active: boolean; vx: number; vy: number; vz: number }[] = [];
   public chatLog: ChatMessage[] = [];
   public onChatAdded?: (msg: ChatMessage) => void;
 
@@ -126,6 +127,7 @@ export class BotManager {
     this.botLastPos = [];
     this.botStuckTimers = [];
     this.botAvoidMachineId = [];
+    this.botKnockbacks = [];
 
     const clampedCount = Math.max(2, Math.min(16, count));
 
@@ -161,7 +163,8 @@ export class BotManager {
         assignedZoneName: initialZone.name,
         waypointWaitTimer: 0,
         targetMachineId: null,
-        botSkillCheckTimer: 2.8
+        botSkillCheckTimer: 2.8,
+        isCarriedByPlayer: false
       };
       this.bots.push(state);
 
@@ -175,6 +178,7 @@ export class BotManager {
         bloodScale: 0.1,
         twitchTimer: 1.6
       });
+      this.botKnockbacks.push({ active: false, vx: 0, vy: 0, vz: 0 });
     }
 
     // Initial greeting in chat
@@ -466,6 +470,20 @@ export class BotManager {
 
       if (bot.state === 'ESCAPED') return;
 
+      if (bot.isCarriedByPlayer) {
+        mesh.scale.set(1.0, 0.9, 1.0);
+        mesh.position.set(bot.x, bot.y, bot.z);
+        mesh.rotation.set(0, bot.rotationY, 0);
+        spot.intensity = 1.6;
+        const legs = this.legRefs[idx];
+        if (legs) {
+          const kick = Math.sin(elapsed * 8 + idx) * 0.25;
+          legs.left.rotation.x = kick;
+          legs.right.rotation.x = -kick;
+        }
+        return;
+      }
+
       const distToJacky = Math.hypot(jackyX - bot.x, jackyZ - bot.z);
       const distToPlayer = Math.hypot(playerX - bot.x, playerZ - bot.z);
 
@@ -574,8 +592,28 @@ export class BotManager {
         spot.intensity = 2.8;
       }
 
+      // Apply Jacky High Jump slam knockback arc ("mental") if hit!
+      const kb = this.botKnockbacks[idx];
+      if (kb && kb.active) {
+        bot.x = Math.max(-125, Math.min(125, bot.x + kb.vx * delta));
+        bot.z = Math.max(-125, Math.min(125, bot.z + kb.vz * delta));
+        bot.y += kb.vy * delta;
+        kb.vy -= 22.0 * delta;
+        if (bot.y <= 0) {
+          bot.y = 0;
+          kb.active = false;
+          kb.vx = 0;
+          kb.vy = 0;
+          kb.vz = 0;
+        }
+        mesh.scale.set(1.0, 1.0, 1.0);
+        mesh.position.set(bot.x, bot.y, bot.z);
+        mesh.rotation.y = bot.rotationY;
+        return;
+      }
+
       // Update 3D mesh position, leg stride, highlight beacon & smooth rotation
-      mesh.position.set(bot.x, 0, bot.z);
+      mesh.position.set(bot.x, bot.y, bot.z);
       mesh.rotation.y = bot.rotationY;
       const legs = this.legRefs[idx];
       if (legs) {
@@ -586,6 +624,56 @@ export class BotManager {
       const marker = this.highlightMarkers[idx];
       if (marker) {
         marker.visible = false;
+      }
+    });
+  }
+
+  /**
+   * HARD Mode: Flings ("mental") ONLY bots standing inside Jacky's landing indicator zone
+   */
+  public applyJackySlamKnockback(
+    landX: number,
+    landZ: number,
+    radius: number,
+    onBotKilledBySlam: (bot: BotCompanionState) => void
+  ): void {
+    this.bots.forEach((bot, idx) => {
+      if (!bot.isAlive || bot.state === 'ESCAPED' || bot.state === 'HIDING' || bot.isCarriedByPlayer) return;
+      const dx = bot.x - landX;
+      const dz = bot.z - landZ;
+      const dist = Math.hypot(dx, dz);
+      if (dist > radius) return;
+
+      const ang = dist > 0.05 ? Math.atan2(dx, dz) : Math.random() * Math.PI * 2;
+      const dirX = Math.sin(ang);
+      const dirZ = Math.cos(ang);
+
+      const kb = this.botKnockbacks[idx];
+      if (kb) {
+        kb.active = true;
+        kb.vx = dirX * 18.0;
+        kb.vy = 8.2;
+        kb.vz = dirZ * 18.0;
+      }
+      bot.y = 0.25;
+      bot.health = Math.max(0, bot.health - 35);
+      bot.panicLevel = 1.0;
+      bot.state = 'FLEEING';
+      bot.hideCooldown = 3.0;
+      this.assignNewZoneTarget(bot);
+
+      if (bot.health <= 0) {
+        bot.isAlive = false;
+        horrorAudio.playBotScream();
+        onBotKilledBySlam(bot);
+      } else {
+        this.addChatMessage(
+          bot.name,
+          bot.color,
+          `💥 ADUH!! Aku mental terkena hantaman lompatan tinggi Jacky! (-35 HP)`,
+          `💥 OUCH!! I got flung by Jacky's high-jump slam! (-35 HP)`,
+          'PANIC'
+        );
       }
     });
   }
@@ -632,6 +720,7 @@ export class BotManager {
       bot.hideCooldown = 0;
       bot.waypointWaitTimer = 0;
       bot.targetMachineId = null;
+      bot.isCarriedByPlayer = false;
       bot.botSkillCheckTimer = 2.4 + Math.random() * 1.5;
 
       // Pick an initial patrol cell far away
@@ -687,7 +776,9 @@ export class BotManager {
     onMachineFixed: (machineId: number, botName: string) => void,
     onMachineFailed: (machine: MazeMachine, botName: string) => void,
     onRescuePrisoners: (rescuer: BotCompanionState) => void,
-    onBotEscaped: (bot: BotCompanionState) => void
+    onBotEscaped: (bot: BotCompanionState) => void,
+    evilOlivia?: { x: number; z: number; rotationY: number; active: boolean; isStunned: boolean } | null,
+    isScreamSlowed: boolean = false
   ): void {
     this.chatCooldown -= delta;
 
@@ -723,15 +814,35 @@ export class BotManager {
         bot.hideCooldown = Math.max(0, bot.hideCooldown - delta);
       }
 
-      // 1. Being physically carried in Jesty's clutches toward prison cage!
+      // 0. Safely carried ("digendong") by the Player via Sarung Tangan Sirkus!
+      if (bot.isCarriedByPlayer) {
+        if (mesh) {
+          mesh.position.set(bot.x, bot.y, bot.z);
+          mesh.rotation.set(0, bot.rotationY, 0);
+          mesh.scale.set(1, 0.9, 1);
+        }
+        if (spot) spot.intensity = 1.6;
+        if (legs) {
+          const kick = Math.sin(elapsed * 8 + idx) * 0.25;
+          legs.left.rotation.x = kick;
+          legs.right.rotation.x = -kick;
+        }
+        return;
+      }
+
+      // 1. Being physically carried in Jesty's or Evil Olivia's clutches toward prison cage!
       if (bot.state === 'BEING_CARRIED') {
-        const carryX = jestyX + Math.sin(jestyRotY) * 1.05;
-        const carryZ = jestyZ + Math.cos(jestyRotY) * 1.05;
+        const useOlivia = bot.carriedByMonster === 'EVIL_OLIVIA' && evilOlivia?.active;
+        const cx = useOlivia ? evilOlivia!.x : jestyX;
+        const cz = useOlivia ? evilOlivia!.z : jestyZ;
+        const cRot = useOlivia ? evilOlivia!.rotationY : jestyRotY;
+        const carryX = cx + Math.sin(cRot) * 1.05;
+        const carryZ = cz + Math.cos(cRot) * 1.05;
         bot.x = carryX;
         bot.z = carryZ;
         if (mesh) {
           mesh.position.set(carryX, 0.72 + Math.sin(elapsed * 16 + idx) * 0.06, carryZ);
-          mesh.rotation.set(0.2, jestyRotY + Math.PI, 0);
+          mesh.rotation.set(0.2, cRot + Math.PI, 0);
           mesh.scale.set(1, 0.94, 1);
         }
         if (spot) spot.intensity = 1.6;
@@ -766,6 +877,11 @@ export class BotManager {
       const distToJesty = Math.hypot(jestyX - bot.x, jestyZ - bot.z);
       const anyPrisonerTrapped = playerImprisoned || imprisonedBotCount > 0;
 
+      const distToOlivia =
+        evilOlivia && evilOlivia.active && !evilOlivia.isStunned
+          ? Math.hypot(evilOlivia.x - bot.x, evilOlivia.z - bot.z)
+          : 999;
+
       if (bot.state === 'RESCUING_PLAYER' && !anyPrisonerTrapped) {
         bot.state = 'SEARCHING';
       }
@@ -779,6 +895,11 @@ export class BotManager {
           goalX = evadeDest.x;
           goalZ = evadeDest.z;
           moveSpeed = 5.4;
+        } else if (distToOlivia < 7.5 && lockDist > 5.0 && bot.hideCooldown <= 0 && evilOlivia) {
+          const evadeDest = maze.findBestFleeDestination(bot.x, bot.z, evilOlivia.x, evilOlivia.z);
+          goalX = evadeDest.x;
+          goalZ = evadeDest.z;
+          moveSpeed = 5.4;
         } else if (lockDist > 2.4) {
           goalX = dropPos.x;
           goalZ = dropPos.z;
@@ -788,6 +909,14 @@ export class BotManager {
           bot.state = 'SEARCHING';
           bot.hideCooldown = 5.0;
         }
+      } else if (distToOlivia < 18 && bot.hideCooldown <= 0 && evilOlivia && (jestyMask !== 'COMEDY' || distToOlivia < distToJesty)) {
+        // Flee from Evil Olivia in Nightmare mode!
+        bot.state = 'FLEEING';
+        bot.targetMachineId = null;
+        moveSpeed = 5.4;
+        const fleeDest = maze.findBestFleeDestination(bot.x, bot.z, evilOlivia.x, evilOlivia.z);
+        goalX = fleeDest.x;
+        goalZ = fleeDest.z;
       } else if (jestyMask === 'COMEDY' && distToJesty < 19 && bot.hideCooldown <= 0) {
         // 3. Flee away from aggressive Jesty using BFS corridor reachability (never runs blind into dead-ends!)
         const wasRepairing = bot.state === 'REPAIRING';
@@ -997,7 +1126,8 @@ export class BotManager {
         if (dist > 0.12) {
           const prevX = bot.x;
           const prevZ = bot.z;
-          const stepLen = moveSpeed * delta;
+          const effectiveSpeed = isScreamSlowed ? moveSpeed * 0.45 : moveSpeed;
+          const stepLen = effectiveSpeed * delta;
           const dirX = dx / dist;
           const dirZ = dz / dist;
           const vx = dirX * stepLen;

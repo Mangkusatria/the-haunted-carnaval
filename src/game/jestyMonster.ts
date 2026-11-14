@@ -8,9 +8,9 @@
  */
 
 import * as THREE from 'three';
-import { JestyInfo, BotCompanionState } from '../types';
+import { Difficulty, JestyInfo, BotCompanionState } from '../types';
 import { horrorAudio } from '../audio/HorrorAudio';
-import { CircusMaze } from './circusMaze';
+import { CircusMaze, JestyPaintingSpot } from './circusMaze';
 
 export class JestyMonster {
   public group: THREE.Group = new THREE.Group();
@@ -42,6 +42,11 @@ export class JestyMonster {
   private investigateTarget: { x: number; z: number } | null = null;
   private investigateTimer: number = 0;
   public stunTimer: number = 0;
+  private paintingTeleportCooldown: number = 14.0;
+  private emergeTimer: number = 0;
+  private readonly emergeDuration: number = 1.15;
+  private emergeStart: { x: number; z: number; rotY: number } = { x: 0, z: 0, rotY: 0 };
+  private emergeEnd: { x: number; z: number } = { x: 0, z: 0 };
 
   constructor(startX: number = 0, startZ: number = -260) {
     this.info = {
@@ -290,6 +295,7 @@ export class JestyMonster {
       transparent: true,
       opacity: 0.65,
       depthTest: false,
+      fog: false,
       side: THREE.DoubleSide
     });
     const beacon = new THREE.Mesh(beaconGeo, beaconMat);
@@ -329,8 +335,11 @@ export class JestyMonster {
     bots: BotCompanionState[],
     maze: CircusMaze,
     onDeliverVictim?: (victimType: 'PLAYER' | 'BOT', victimId: string | null) => void,
-    isPanicMode: boolean = false
+    isPanicMode: boolean = false,
+    difficulty: Difficulty = 'NORMAL',
+    onPaintingTeleport?: (spot: JestyPaintingSpot) => void
   ): void {
+    const isHardNonPanic = !isPanicMode && (difficulty === 'HARD' || difficulty === 'NIGHTMARE');
     this.chuckleCooldown -= delta;
     this.isMoving = false;
     this.moveSpeed = 0;
@@ -366,6 +375,66 @@ export class JestyMonster {
     }
     this.info.stunTimer = 0;
     this.headGroup.rotation.z = 0;
+
+    // 1.75 NIGHTMARE Mode: Jesty emerges physically out of a Jesty Portrait Painting!
+    if (this.emergeTimer > 0) {
+      this.emergeTimer = Math.max(0, this.emergeTimer - delta);
+      const t = 1 - this.emergeTimer / this.emergeDuration;
+      const eased = 1 - Math.pow(1 - t, 3);
+      this.info.x = THREE.MathUtils.lerp(this.emergeStart.x, this.emergeEnd.x, eased);
+      this.info.z = THREE.MathUtils.lerp(this.emergeStart.z, this.emergeEnd.z, eased);
+      this.info.rotationY = this.emergeStart.rotY;
+      this.jesterMesh.scale.setScalar(0.38 + 0.62 * eased);
+      this.gazeLight.color.setHex(0xff1144);
+      this.gazeLight.intensity = 5.5 - eased * 2.5;
+      this.group.position.set(this.info.x, (1 - eased) * 0.65, this.info.z);
+      this.group.rotation.y = this.info.rotationY;
+      this.leftArmGroup.rotation.x = -1.2;
+      this.rightArmGroup.rotation.x = -1.2;
+      if (this.emergeTimer <= 0) {
+        this.jesterMesh.scale.setScalar(1);
+        this.group.position.y = 0;
+        const resolved = maze.clampAndResolveCollision(this.info.x, this.info.z, this.info.x, this.info.z, 0.55);
+        this.info.x = resolved.x;
+        this.info.z = resolved.z;
+      }
+      return;
+    }
+    this.jesterMesh.scale.setScalar(1);
+
+    // NIGHTMARE Mode: Periodically teleport into a Jesty Portrait Painting and step out of it!
+    if (
+      difficulty === 'NIGHTMARE' &&
+      this.info.state !== 'CARRYING_VICTIM' &&
+      this.info.state !== 'TAUNTING' &&
+      maze.jestyPaintings.length > 0
+    ) {
+      this.paintingTeleportCooldown -= delta;
+      if (this.paintingTeleportCooldown <= 0) {
+        const midRangeSpots = maze.jestyPaintings.filter((sp) => {
+          const d = Math.hypot(sp.x - playerX, sp.z - playerZ);
+          return d >= 9 && d <= 48;
+        });
+        const pool = midRangeSpots.length > 0 ? midRangeSpots : maze.jestyPaintings;
+        const picked = pool[Math.floor(Math.random() * pool.length)];
+
+        this.info.activeMask = 'COMEDY';
+        this.maskSpinPhase = Math.PI * 2;
+        this.info.maskSwapTimer = Math.max(this.info.maskSwapTimer, 22.0);
+        this.info.state = 'CHASING';
+        this.emergeStart = { x: picked.wallX, z: picked.wallZ, rotY: picked.rotY };
+        this.emergeEnd = { x: picked.x, z: picked.z };
+        this.emergeTimer = this.emergeDuration;
+        this.info.x = picked.wallX;
+        this.info.z = picked.wallZ;
+        this.info.rotationY = picked.rotY;
+        this.paintingTeleportCooldown = isPanicMode ? 11.0 + Math.random() * 5.0 : 15.0 + Math.random() * 8.0;
+        horrorAudio.playMaskSwapComedy();
+        horrorAudio.playJestyLaughter(0.85);
+        onPaintingTeleport?.(picked);
+        return;
+      }
+    }
 
     // 2. Dynamic Mask Swap Ability (Panic Mode keeps Jesty furious in Comedy mask!)
     if (isPanicMode) {
@@ -419,7 +488,8 @@ export class JestyMonster {
       const dist = Math.hypot(dropPos.x - this.info.x, dropPos.z - this.info.z);
 
       if (dist > 2.4) {
-        this.moveWithMazePath(dropPos.x, dropPos.z, isPanicMode ? 6.4 : 4.9, delta, maze);
+        const carrySpeed = isPanicMode ? 6.4 : (isHardNonPanic ? 9.8 : 4.9);
+        this.moveWithMazePath(dropPos.x, dropPos.z, carrySpeed, delta, maze);
         if (this.chuckleCooldown <= 0 && this.lastPlayerDist < 55) {
           const vol = Math.max(0.18, 1 - this.lastPlayerDist / 55);
           horrorAudio.playJestyLaughter(vol);
@@ -471,7 +541,7 @@ export class JestyMonster {
         this.pickRandomMazeWaypoint(maze);
       }
 
-      this.moveWithMazePath(this.targetWaypoint.x, this.targetWaypoint.z, 1.9, delta, maze);
+      this.moveWithMazePath(this.targetWaypoint.x, this.targetWaypoint.z, isHardNonPanic ? 3.8 : 1.9, delta, maze);
       this.clampAndAnimate(delta, elapsed, maze);
       return;
     }
@@ -488,8 +558,8 @@ export class JestyMonster {
     const candidates: PreyCandidate[] = [];
     const playerDetectRange = isPanicMode ? 55 : 30;
     const botDetectRange = isPanicMode ? 55 : 34;
-    const chaseSpeed = isPanicMode ? 7.35 : 5.2;
-    const patrolSpeed = isPanicMode ? 5.6 : 3.2;
+    const chaseSpeed = isPanicMode ? 7.35 : (isHardNonPanic ? 10.4 : 5.2);
+    const patrolSpeed = isPanicMode ? 5.6 : (isHardNonPanic ? 6.4 : 3.2);
 
     const distToPlayer = Math.hypot(playerX - this.info.x, playerZ - this.info.z);
     if (!playerIsHiding && !playerImprisoned && playerGraceTimer <= 0 && distToPlayer < playerDetectRange) {
@@ -509,7 +579,8 @@ export class JestyMonster {
         bot.state === 'HIDING' ||
         bot.state === 'IMPRISONED' ||
         bot.state === 'BEING_CARRIED' ||
-        bot.state === 'ESCAPED'
+        bot.state === 'ESCAPED' ||
+        bot.isCarriedByPlayer
       ) continue;
       const bd = Math.hypot(bot.x - this.info.x, bot.z - this.info.z);
       if (bd < botDetectRange) {
@@ -557,7 +628,7 @@ export class JestyMonster {
         this.investigateTarget = null;
         this.investigateTimer = 0;
       } else {
-        this.moveWithMazePath(this.investigateTarget.x, this.investigateTarget.z, isPanicMode ? 7.35 : 5.4, delta, maze);
+        this.moveWithMazePath(this.investigateTarget.x, this.investigateTarget.z, isPanicMode ? 7.35 : (isHardNonPanic ? 10.8 : 5.4), delta, maze);
       }
       if (this.chuckleCooldown <= 0 && this.lastPlayerDist < 55) {
         const vol = Math.max(0.2, 1 - this.lastPlayerDist / 55);
@@ -826,6 +897,8 @@ export class JestyMonster {
   public stun(duration: number = 6.5): void {
     this.stunTimer = Math.max(this.stunTimer, duration);
     this.info.stunTimer = this.stunTimer;
+    this.emergeTimer = 0;
+    this.jesterMesh.scale.setScalar(1);
     this.info.state = 'STUNNED';
     this.info.carryingVictim = null;
     this.info.carryingVictimType = 'NONE';
@@ -839,6 +912,9 @@ export class JestyMonster {
   public resetPosition(x: number, z: number): void {
     this.stunTimer = 0;
     this.info.stunTimer = 0;
+    this.emergeTimer = 0;
+    this.paintingTeleportCooldown = 13.0;
+    this.jesterMesh.scale.setScalar(1);
     this.headGroup.rotation.z = 0;
     this.info.x = x;
     this.info.z = z;

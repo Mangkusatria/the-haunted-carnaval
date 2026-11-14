@@ -7,17 +7,26 @@
  */
 
 import React from 'react';
-import { DeviceMode, Language } from '../types';
-import { Play, Users, HelpCircle, Monitor, Smartphone } from 'lucide-react';
+import { DeviceMode, Difficulty, Language } from '../types';
+import { Play, Users, HelpCircle, Monitor, Smartphone, Flame, Shield, Skull, Trophy, ShoppingBag, Coins } from 'lucide-react';
 
 interface Props {
   botCount: number;
   setBotCount: (count: number) => void;
   deviceMode: DeviceMode;
   setDeviceMode: (mode: DeviceMode) => void;
+  difficulty: Difficulty;
+  setDifficulty: (diff: Difficulty) => void;
   language: Language;
   setLanguage: (lang: Language) => void;
+  circusCoins?: number;
+  monsterRadarCount?: number;
   circusPistolCount?: number;
+  circusGlovesCount?: number;
+  unlockedAchievementsCount?: number;
+  totalAchievementsCount?: number;
+  onOpenAchievements: () => void;
+  onOpenShop: () => void;
   onStartGame: () => void;
 }
 
@@ -26,9 +35,18 @@ export const MainMenuModal: React.FC<Props> = ({
   setBotCount,
   deviceMode,
   setDeviceMode,
+  difficulty,
+  setDifficulty,
   language,
   setLanguage,
+  circusCoins = 0,
+  monsterRadarCount = 0,
   circusPistolCount = 0,
+  circusGlovesCount = 0,
+  unlockedAchievementsCount = 0,
+  totalAchievementsCount = 11,
+  onOpenAchievements,
+  onOpenShop,
   onStartGame
 }) => {
   const isId = language === 'id';
@@ -199,52 +217,209 @@ export const MainMenuModal: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* Inventory Hadiah Kemenangan: Pistol Sirkus */}
-        <div
-          className={`rounded-xl px-4 py-3 mb-5 border flex items-center justify-between gap-3 ${
-            circusPistolCount > 0
-              ? 'bg-cyan-950/60 border-cyan-400/70 text-cyan-100 shadow-[0_0_20px_rgba(56,189,248,0.2)]'
-              : 'bg-stone-950/70 border-stone-800 text-stone-400'
-          }`}
-        >
-          <div className="flex items-center gap-2.5">
-            <span className="text-xl">🔫</span>
-            <div>
-              <div className="text-xs sm:text-sm font-bold text-stone-100">
-                {isId ? 'Item Hadiah: Pistol Sirkus (Sekali Pakai)' : 'Reward Item: Circus Pistol (Single-Use)'}
+        {/* =======================================================
+            SECTION 1.7 (ABOVE START BUTTON): PILIH TINGKAT KESULITAN
+            ======================================================= */}
+        <div className="bg-stone-950/80 border border-stone-800 rounded-xl p-4 mb-5">
+          <div className="flex items-center justify-between mb-2.5">
+            <span className="text-stone-200 font-bold text-sm">
+              {isId ? 'Pilih Tingkat Kesulitan (Difficulty)' : 'Select Difficulty'}
+            </span>
+            <span
+              className={`text-[11px] font-mono font-black uppercase ${
+                difficulty === 'NIGHTMARE'
+                  ? 'text-fuchsia-400'
+                  : difficulty === 'HARD'
+                  ? 'text-red-400'
+                  : 'text-emerald-400'
+              }`}
+            >
+              {difficulty === 'NIGHTMARE'
+                ? '💀 MODE NIGHTMARE'
+                : difficulty === 'HARD'
+                ? '🔥 MODE HARD'
+                : 'MODE NORMAL'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <button
+              type="button"
+              onClick={() => setDifficulty('NORMAL')}
+              className={`flex items-start gap-2.5 p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                difficulty === 'NORMAL'
+                  ? 'bg-emerald-950/80 border-emerald-400 text-white shadow-[0_0_18px_rgba(16,185,129,0.25)]'
+                  : 'bg-stone-900/70 border-stone-800 text-stone-400 hover:border-stone-600 hover:text-stone-200'
+              }`}
+            >
+              <div
+                className={`p-2 rounded-lg border shrink-0 ${
+                  difficulty === 'NORMAL'
+                    ? 'bg-emerald-900/80 border-emerald-400 text-white'
+                    : 'bg-stone-800 border-stone-700 text-stone-400'
+                }`}
+              >
+                <Shield className="w-4 h-4" />
               </div>
-              <div className="text-[11px] opacity-85">
-                {circusPistolCount > 0
-                  ? (isId
-                      ? 'Siap dipakai di game! Tembak untuk stun Jacky atau Jesty selama 6.5 detik ([Q] / Tombol HP).'
-                      : 'Ready to use in-game! Stuns Jacky or Jesty for 6.5s ([Q] / Mobile Button).')
-                  : (isId
-                      ? 'Menangkan permainan untuk mendapatkan +1 Pistol Sirkus setiap kemenangan!'
-                      : 'Win a game to earn +1 Circus Pistol every victory!')}
+              <div>
+                <div className="font-bold text-sm">NORMAL</div>
+                <div className="text-[11px] opacity-85 leading-snug">
+                  {isId
+                    ? 'Permainan standar. Jacky & Jesty kecepatan normal (+100 KS).'
+                    : 'Balanced standard horror experience (+100 KS).'}
+                </div>
               </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setDifficulty('HARD')}
+              className={`flex items-start gap-2.5 p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                difficulty === 'HARD'
+                  ? 'bg-red-950/85 border-red-500 text-white shadow-[0_0_22px_rgba(239,68,68,0.35)]'
+                  : 'bg-stone-900/70 border-stone-800 text-stone-400 hover:border-stone-600 hover:text-stone-200'
+              }`}
+            >
+              <div
+                className={`p-2 rounded-lg border shrink-0 ${
+                  difficulty === 'HARD'
+                    ? 'bg-red-900/85 border-red-400 text-white'
+                    : 'bg-stone-800 border-stone-700 text-stone-400'
+                }`}
+              >
+                <Flame className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="font-bold text-sm text-red-200">HARD 🔥</div>
+                <div className="text-[11px] opacity-90 leading-snug">
+                  {isId
+                    ? 'High Jump + mental, Jacky & Jesty 2X cepat di luar Panic Mode (+300 KS).'
+                    : 'Frequent High Jumps with knockback, 2X speed outside Panic Mode (+300 KS).'}
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setDifficulty('NIGHTMARE')}
+              className={`flex items-start gap-2.5 p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                difficulty === 'NIGHTMARE'
+                  ? 'bg-fuchsia-950/90 border-fuchsia-500 text-white shadow-[0_0_24px_rgba(217,70,239,0.42)]'
+                  : 'bg-stone-900/70 border-stone-800 text-stone-400 hover:border-stone-600 hover:text-stone-200'
+              }`}
+            >
+              <div
+                className={`p-2 rounded-lg border shrink-0 ${
+                  difficulty === 'NIGHTMARE'
+                    ? 'bg-fuchsia-900/90 border-fuchsia-400 text-white'
+                    : 'bg-stone-800 border-stone-700 text-stone-400'
+                }`}
+              >
+                <Skull className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="font-bold text-sm text-fuchsia-200">NIGHTMARE 💀</div>
+                <div className="text-[11px] opacity-90 leading-snug">
+                  {isId
+                    ? 'Karnaval gelap gulita! High Jump ekstra sering, speed Jacky naik tiap bunuh bot, & langsung lompat ke gerbang saat Panic Mode (+500 KS)!'
+                    : 'Pitch-dark carnival! Nonstop High Jumps, Jacky speeds up per bot kill & leaps straight to the gate on Panic Mode (+500 KS)!'}
+                </div>
+              </div>
+            </button>
+          </div>
+        </div>
+
+        {/* Inventory Item & Saldo Koin Sirkus */}
+        <div className="rounded-xl px-4 py-3 mb-5 border border-stone-800 bg-stone-950/85 space-y-2.5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-xs sm:text-sm font-bold text-stone-100">
+              <Coins className="w-4 h-4 text-amber-400" />
+              <span>{isId ? 'Perlengkapan & Koin Sirkus (Sekali Pakai)' : 'Single-Use Gear & Circus Coins'}</span>
+            </div>
+            <span className="px-2.5 py-1 rounded-lg bg-amber-950/80 border border-amber-500/70 text-amber-300 font-mono font-black text-xs shrink-0">
+              🪙 {circusCoins} KS
+            </span>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 text-center font-mono text-[11px]">
+            <div className={`px-2 py-1.5 rounded-lg border ${monsterRadarCount > 0 ? 'bg-rose-950/60 border-rose-500/70 text-rose-200' : 'bg-stone-900/70 border-stone-800 text-stone-500'}`}>
+              <div className="font-bold truncate">📡 Radar [R]</div>
+              <div className="font-black text-xs mt-0.5">x{monsterRadarCount}</div>
+            </div>
+            <div className={`px-2 py-1.5 rounded-lg border ${circusPistolCount > 0 ? 'bg-cyan-950/60 border-cyan-500/70 text-cyan-200' : 'bg-stone-900/70 border-stone-800 text-stone-500'}`}>
+              <div className="font-bold truncate">🔫 Pistol [Q]</div>
+              <div className="font-black text-xs mt-0.5">x{circusPistolCount}</div>
+            </div>
+            <div className={`px-2 py-1.5 rounded-lg border ${circusGlovesCount > 0 ? 'bg-emerald-950/60 border-emerald-500/70 text-emerald-200' : 'bg-stone-900/70 border-stone-800 text-stone-500'}`}>
+              <div className="font-bold truncate">🧤 Sarung [T]</div>
+              <div className="font-black text-xs mt-0.5">x{circusGlovesCount}</div>
             </div>
           </div>
-          <span
-            className={`px-3 py-1 rounded-lg font-mono font-black text-sm shrink-0 border ${
-              circusPistolCount > 0
-                ? 'bg-cyan-500 text-stone-950 border-cyan-300'
-                : 'bg-stone-900 text-stone-500 border-stone-800'
-            }`}
-          >
-            x{circusPistolCount}
-          </span>
         </div>
 
         {/* =======================================================
             SECTION 2 (CENTER): TOMBOL START DI TENGAH
             ======================================================= */}
-        <div className="flex justify-center mb-6">
+        <div className="flex justify-center mb-5">
           <button
             onClick={onStartGame}
             className="w-full sm:w-auto px-10 py-4 bg-gradient-to-r from-red-700 via-red-600 to-red-800 hover:from-red-600 hover:to-red-700 text-white font-extrabold text-lg sm:text-xl rounded-xl shadow-[0_0_35px_rgba(220,38,38,0.6)] hover:shadow-[0_0_50px_rgba(239,68,68,0.8)] transition-all flex items-center justify-center gap-3 active:scale-95 cursor-pointer uppercase tracking-wider"
           >
             <Play className="w-6 h-6 fill-white" />
             <span>{isId ? 'MULAI PERMAINAN' : 'START GAME'}</span>
+          </button>
+        </div>
+
+        {/* =======================================================
+            SECTION 2.5: OPSI ACHIEVEMENT (AKTIF) & TOKO (COMING SOON)
+            ======================================================= */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+          {/* Opsi Achievement (Clickable!) */}
+          <button
+            type="button"
+            onClick={onOpenAchievements}
+            className="w-full flex items-center justify-between gap-3 p-3.5 rounded-xl bg-amber-950/40 hover:bg-amber-950/70 border-2 border-amber-500/70 hover:border-amber-400 text-stone-100 transition-all active:scale-95 cursor-pointer text-left shadow-lg"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="p-2 rounded-lg bg-amber-500/20 border border-amber-400 text-amber-300 shrink-0">
+                <Trophy className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="font-bold text-sm text-amber-200 truncate">
+                  {isId ? 'Achievement' : 'Achievements'}
+                </div>
+                <div className="text-[11px] text-amber-100/75 truncate">
+                  {isId ? 'Lihat badge pencapaian' : 'View achievement badges'}
+                </div>
+              </div>
+            </div>
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-400 text-stone-950 font-mono font-black text-xs shrink-0">
+              {unlockedAchievementsCount}/{totalAchievementsCount}
+            </span>
+          </button>
+
+          {/* Opsi Toko Olivia the Jester Woman (Active & Clickable!) */}
+          <button
+            type="button"
+            onClick={onOpenShop}
+            className="w-full flex items-center justify-between gap-3 p-3.5 rounded-xl bg-fuchsia-950/45 hover:bg-fuchsia-950/75 border-2 border-fuchsia-500/75 hover:border-fuchsia-400 text-stone-100 transition-all active:scale-95 cursor-pointer text-left shadow-lg"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="p-2 rounded-lg bg-fuchsia-500/20 border border-fuchsia-400 text-fuchsia-300 shrink-0">
+                <ShoppingBag className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="font-bold text-sm text-fuchsia-200 truncate">
+                  {isId ? 'Toko Olivia' : "Olivia's Shop"}
+                </div>
+                <div className="text-[11px] text-fuchsia-100/75 truncate">
+                  {isId ? 'Olivia the Jester Woman' : 'Jester Woman Item Stall'}
+                </div>
+              </div>
+            </div>
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-400 text-stone-950 font-mono font-black text-xs shrink-0">
+              {circusCoins} KS
+            </span>
           </button>
         </div>
 

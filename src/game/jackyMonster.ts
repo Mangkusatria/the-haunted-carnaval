@@ -6,7 +6,7 @@
 
 import * as THREE from 'three';
 import { ProceduralTextures } from './proceduralTextures';
-import { BotCompanionState, JackyInfo, JackyState } from '../types';
+import { BotCompanionState, Difficulty, JackyInfo, JackyState } from '../types';
 import { horrorAudio } from '../audio/HorrorAudio';
 
 export class JackyMonster {
@@ -47,7 +47,10 @@ export class JackyMonster {
   private leapTargetZ: number = 0;
   private leapDuration: number = 2.4;
   public stunTimer: number = 0;
+  private currentDifficulty: Difficulty = 'NORMAL';
+  public nightmareBotKillCount: number = 0;
   public onScreenShake?: (intensity: number) => void;
+  public onLeapSlamLanded?: (landX: number, landZ: number) => void;
 
   constructor(startX: number = 40, startZ: number = 40) {
     this.info = {
@@ -281,8 +284,10 @@ export class JackyMonster {
     bots: BotCompanionState[],
     betrayedBotId: string | null = null,
     isBloodSky: boolean = false,
-    playerGraceTimer: number = 0
+    playerGraceTimer: number = 0,
+    difficulty: Difficulty = 'NORMAL'
   ): void {
+    this.currentDifficulty = difficulty;
     const pos = this.group.position;
     this.info.x = pos.x;
     this.info.y = pos.y;
@@ -407,7 +412,8 @@ export class JackyMonster {
       pos.z = this.leapStartZ + (Math.random() - 0.5) * 0.18;
       this.crankSpeed = 16.0;
 
-      if (this.leapTimer >= 1.2) {
+      const prepareTime = this.currentDifficulty === 'NIGHTMARE' ? 0.9 : 1.2;
+      if (this.leapTimer >= prepareTime) {
         this.info.state = 'LEAP_AIRBORNE';
         this.leapTimer = 0;
         horrorAudio.playSpringLaunch();
@@ -417,7 +423,8 @@ export class JackyMonster {
 
     if (this.info.state === 'LEAP_AIRBORNE') {
       this.leapTimer += delta;
-      const progress = Math.min(1.0, this.leapTimer / this.leapDuration);
+      const activeLeapDuration = this.currentDifficulty === 'NIGHTMARE' ? 1.85 : this.leapDuration;
+      const progress = Math.min(1.0, this.leapTimer / activeLeapDuration);
       this.info.leapProgress = progress;
 
       // Parabolic flight arc up to 32 meters high in the circus sky!
@@ -444,6 +451,9 @@ export class JackyMonster {
         if (this.onScreenShake) {
           this.onScreenShake(0.65);
         }
+        if (this.onLeapSlamLanded) {
+          this.onLeapSlamLanded(this.leapTargetX, this.leapTargetZ);
+        }
       }
       return;
     }
@@ -456,7 +466,12 @@ export class JackyMonster {
 
       if (this.leapTimer >= 0.7) {
         this.info.isLeaping = false;
-        this.leapCooldown = 22.0 + Math.random() * 12.0;
+        this.leapCooldown =
+          this.currentDifficulty === 'NIGHTMARE'
+            ? 2.2 + Math.random() * 2.1
+            : this.currentDifficulty === 'HARD'
+            ? 5.5 + Math.random() * 4.0
+            : 22.0 + Math.random() * 12.0;
         if (isBloodSky) {
           this.info.state = 'BLOOD_HUNT';
         } else {
@@ -466,37 +481,50 @@ export class JackyMonster {
       return;
     }
 
-    // Check if Jacky can trigger a Mega Jump leap
+    // Check if Jacky can trigger a Mega Jump leap (HARD leaps often; NIGHTMARE leaps even more frequently!)
     this.leapCooldown -= delta;
     if (this.info.state !== 'INTERROGATING' && this.leapCooldown <= 0) {
+      const isNightmare = this.currentDifficulty === 'NIGHTMARE';
+      const isHard = this.currentDifficulty === 'HARD' || isNightmare;
+      const minLeapDist = isNightmare ? 7 : isHard ? 11 : 22;
+      const targetChance = isNightmare ? 0.96 : isHard ? 0.85 : 0.45;
+      const patrolChance = isNightmare ? 0.88 : isHard ? 0.65 : 0.2;
+
       let shouldLeap = false;
       let targetX = playerX;
       let targetZ = playerZ;
 
       if (this.info.targetType === 'PLAYER' && playerGraceTimer <= 0 && !playerHiding) {
         const d = Math.hypot(playerX - pos.x, playerZ - pos.z);
-        if (d > 22 && Math.random() < 0.45) {
+        if (d > minLeapDist && Math.random() < targetChance) {
           shouldLeap = true;
           const angle = Math.random() * Math.PI * 2;
-          const distOffset = 6 + Math.random() * 6;
+          const distOffset = isNightmare ? (1.2 + Math.random() * 2.5) : isHard ? (2 + Math.random() * 3.5) : (6 + Math.random() * 6);
           targetX = playerX + Math.cos(angle) * distOffset;
           targetZ = playerZ + Math.sin(angle) * distOffset;
         }
       } else if (this.info.targetType === 'BOT' && this.info.targetBotId) {
-        const b = bots.find(bot => bot.id === this.info.targetBotId && bot.isAlive && bot.state !== 'ESCAPED');
+        const b = bots.find(bot => bot.id === this.info.targetBotId && bot.isAlive && bot.state !== 'ESCAPED' && !bot.isCarriedByPlayer);
         if (b) {
           const d = Math.hypot(b.x - pos.x, b.z - pos.z);
-          if (d > 22 && Math.random() < 0.45) {
+          if (d > minLeapDist && Math.random() < targetChance) {
             shouldLeap = true;
-            targetX = b.x + (Math.random() - 0.5) * 8;
-            targetZ = b.z + (Math.random() - 0.5) * 8;
+            const spread = isNightmare ? 2.5 : isHard ? 3.5 : 8;
+            targetX = b.x + (Math.random() - 0.5) * spread;
+            targetZ = b.z + (Math.random() - 0.5) * spread;
           }
         }
-      } else if (Math.random() < 0.2) {
-        // Patrol reposition leap across the carnival (pick far from player if hiding)
+      } else if (Math.random() < patrolChance) {
         shouldLeap = true;
-        targetX = (Math.random() - 0.5) * 160;
-        targetZ = (Math.random() - 0.5) * 160;
+        if (isHard && !playerHiding && playerGraceTimer <= 0 && Math.random() < (isNightmare ? 0.8 : 0.65)) {
+          // On HARD/NIGHTMARE mode, Jacky frequently ambushes toward the player
+          const angle = Math.random() * Math.PI * 2;
+          targetX = playerX + Math.cos(angle) * (2.2 + Math.random() * 3.2);
+          targetZ = playerZ + Math.sin(angle) * (2.2 + Math.random() * 3.2);
+        } else {
+          targetX = (Math.random() - 0.5) * 160;
+          targetZ = (Math.random() - 0.5) * 160;
+        }
       }
 
       if (shouldLeap) {
@@ -512,6 +540,9 @@ export class JackyMonster {
         this.leapTimer = 0;
         horrorAudio.playJackyChuckle();
         return;
+      } else if (isHard) {
+        // Retry quickly on HARD/NIGHTMARE if roll missed
+        this.leapCooldown = isNightmare ? 0.9 : 2.0;
       }
     }
 
@@ -577,7 +608,7 @@ export class JackyMonster {
 
         // All living companion bots
         for (const b of bots) {
-          if (b.isAlive && b.state !== 'ESCAPED') {
+          if (b.isAlive && b.state !== 'ESCAPED' && !b.isCarriedByPlayer) {
             allSurvivors.push({
               type: 'BOT',
               id: b.id,
@@ -599,8 +630,9 @@ export class JackyMonster {
         this.info.targetBotId = target.id;
         this.info.omniscientTargetName = target.name;
 
-        // Furious bounding sprint (8.4 m/s)
-        this.moveTowards(target.x, target.z, 8.4, delta);
+        // Furious bounding sprint (8.4 m/s base, scales per bot kill in NIGHTMARE!)
+        const bloodKillBoost = this.currentDifficulty === 'NIGHTMARE' ? 1 + this.nightmareBotKillCount * 0.22 : 1.0;
+        this.moveTowards(target.x, target.z, 8.4 * bloodKillBoost, delta);
         pos.y = Math.abs(Math.sin(elapsed * 9)) * 0.55;
 
         // Catch range
@@ -639,7 +671,10 @@ export class JackyMonster {
     switch (this.info.state) {
       case 'PATROL': {
         this.info.isPoppedOut = false;
-        this.crankSpeed = 2.5;
+        const isFastDiff = this.currentDifficulty === 'HARD' || this.currentDifficulty === 'NIGHTMARE';
+        const killBoost = this.currentDifficulty === 'NIGHTMARE' ? 1 + this.nightmareBotKillCount * 0.22 : 1.0;
+        this.crankSpeed = isFastDiff ? 5.0 * killBoost : 2.5;
+        const patrolSpeedMult = (isFastDiff ? 2.0 : 1.0) * killBoost;
 
         // If player is hiding and patrol point or Jacky is right beside locker, immediately pick far zone & turn around!
         if (playerHiding && distToPlayer < 16) {
@@ -651,7 +686,8 @@ export class JackyMonster {
         if (pDist < 5 || this.stateTimer > 18) {
           this.pickNewPatrolTarget(playerHiding ? playerX : undefined, playerHiding ? playerZ : undefined);
         } else {
-          this.moveTowards(this.patrolTarget.x, this.patrolTarget.z, playerHiding && distToPlayer < 22 ? 5.2 : 3.4, delta);
+          const basePatrolSpeed = playerHiding && distToPlayer < 22 ? 5.2 : 3.4;
+          this.moveTowards(this.patrolTarget.x, this.patrolTarget.z, basePatrolSpeed * patrolSpeedMult, delta);
         }
 
         // Fair Multi-Target Detection: Evaluates Player AND all alive Bots equally!
@@ -681,7 +717,7 @@ export class JackyMonster {
 
         // Check all alive Bots (Slightly broader sight so Jacky actively hunts bots too!)
         for (const b of bots) {
-          if (!b.isAlive || b.state === 'ESCAPED' || b.state === 'HIDING') continue;
+          if (!b.isAlive || b.state === 'ESCAPED' || b.state === 'HIDING' || b.isCarriedByPlayer) continue;
           const bDist = Math.hypot(b.x - pos.x, b.z - pos.z);
           const maxSight = b.flashlightOn ? 62 : 34;
           if (bDist < maxSight) {
@@ -706,7 +742,10 @@ export class JackyMonster {
 
       case 'STALKING': {
         this.info.isPoppedOut = false;
-        this.crankSpeed = 4.5; // faster winding
+        const isFastDiff = this.currentDifficulty === 'HARD' || this.currentDifficulty === 'NIGHTMARE';
+        const killBoost = this.currentDifficulty === 'NIGHTMARE' ? 1 + this.nightmareBotKillCount * 0.22 : 1.0;
+        const stalkMult = (isFastDiff ? 2.0 : 1.0) * killBoost;
+        this.crankSpeed = 4.5 * stalkMult; // faster winding
 
         if (this.info.targetType === 'PLAYER' && (playerHiding || playerGraceTimer > 0)) {
           this.info.state = 'PATROL';
@@ -721,7 +760,7 @@ export class JackyMonster {
         const targetZ = this.info.targetType === 'PLAYER' ? playerZ : (bots.find(b => b.id === this.info.targetBotId)?.z ?? 0);
         const tDist = Math.hypot(targetX - pos.x, targetZ - pos.z);
 
-        this.moveTowards(targetX, targetZ, 4.2, delta);
+        this.moveTowards(targetX, targetZ, 4.2 * stalkMult, delta);
 
         if (tDist < 12) {
           // POP OUT! Jumpscare Chase!
@@ -750,7 +789,7 @@ export class JackyMonster {
         let chaseZ = playerZ;
 
         if (this.info.targetType === 'BOT' && this.info.targetBotId) {
-          const targetBot = bots.find(b => b.id === this.info.targetBotId && b.isAlive && b.state !== 'ESCAPED');
+          const targetBot = bots.find(b => b.id === this.info.targetBotId && b.isAlive && b.state !== 'ESCAPED' && !b.isCarriedByPlayer);
           if (targetBot) {
             chaseX = targetBot.x;
             chaseZ = targetBot.z;
@@ -766,7 +805,7 @@ export class JackyMonster {
           let closerBot: BotCompanionState | null = null;
           let minBotDist = distToPlayer - 6.0;
           for (const b of bots) {
-            if (!b.isAlive || b.state === 'HIDING' || b.state === 'ESCAPED') continue;
+            if (!b.isAlive || b.state === 'HIDING' || b.state === 'ESCAPED' || b.isCarriedByPlayer) continue;
             const bd = Math.hypot(b.x - pos.x, b.z - pos.z);
             if (bd < minBotDist) {
               minBotDist = bd;
@@ -781,9 +820,11 @@ export class JackyMonster {
           }
         }
 
-        // Fast bounding movement (bouncing on spring!)
+        // Fast bounding movement - 2X faster in HARD/NIGHTMARE outside Panic Mode, plus +22% per bot kill in NIGHTMARE
         const chaseDist = Math.hypot(chaseX - pos.x, chaseZ - pos.z);
-        const speed = 7.8;
+        const isFastDiff = this.currentDifficulty === 'HARD' || this.currentDifficulty === 'NIGHTMARE';
+        const killBoost = this.currentDifficulty === 'NIGHTMARE' ? 1 + this.nightmareBotKillCount * 0.22 : 1.0;
+        const speed = 7.8 * (isFastDiff ? 2.0 : 1.0) * killBoost;
         this.moveTowards(chaseX, chaseZ, speed, delta);
 
         // Bounding hop
@@ -807,7 +848,7 @@ export class JackyMonster {
           break;
         }
         const targetBot = this.info.targetType === 'BOT'
-          ? bots.find(b => b.id === this.info.targetBotId && b.isAlive && b.state !== 'ESCAPED')
+          ? bots.find(b => b.id === this.info.targetBotId && b.isAlive && b.state !== 'ESCAPED' && !b.isCarriedByPlayer)
           : null;
         if (this.info.targetType === 'NONE' || (this.info.targetType === 'BOT' && !targetBot)) {
           this.info.state = 'PATROL';
@@ -853,7 +894,7 @@ export class JackyMonster {
     }
 
     const exposedBots = bots.filter(
-      b => b.isAlive && b.state !== 'ESCAPED' && b.state !== 'HIDING'
+      b => b.isAlive && b.state !== 'ESCAPED' && b.state !== 'HIDING' && !b.isCarriedByPlayer
     );
 
     if (exposedBots.length > 0) {
@@ -958,7 +999,33 @@ export class JackyMonster {
     this.crankSpeed = 0;
   }
 
-  public resetToPatrol(awayX: number = 50, awayZ: number = 50): void {
+  public recordBotKill(): number {
+    this.nightmareBotKillCount += 1;
+    return this.nightmareBotKillCount;
+  }
+
+  public triggerImmediateLeapTo(targetX: number, targetZ: number): void {
+    this.stunTimer = 0;
+    this.info.stunTimer = 0;
+    this.info.state = 'LEAP_PREPARE';
+    this.leapStartX = this.group.position.x;
+    this.leapStartZ = this.group.position.z;
+    this.leapTargetX = Math.max(-122, Math.min(122, targetX));
+    this.leapTargetZ = Math.max(-122, Math.min(122, targetZ));
+    this.info.leapTargetX = this.leapTargetX;
+    this.info.leapTargetZ = this.leapTargetZ;
+    this.info.isLeaping = true;
+    this.info.leapProgress = 0;
+    this.leapTimer = 0.55; // Immediate surge launch straight toward the gate!
+    horrorAudio.playSpringLaunch();
+    horrorAudio.playJackyChuckle();
+  }
+
+  public resetToPatrol(awayX: number = 50, awayZ: number = 50, difficulty?: Difficulty): void {
+    if (difficulty) this.currentDifficulty = difficulty;
+    this.nightmareBotKillCount = 0;
+    this.leapCooldown =
+      this.currentDifficulty === 'NIGHTMARE' ? 3.0 : this.currentDifficulty === 'HARD' ? 6.0 : 18.0;
     this.stunTimer = 0;
     this.info.stunTimer = 0;
     this.boxMesh.rotation.set(0, 0, 0);

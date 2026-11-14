@@ -20,7 +20,28 @@ export type ChapterMode = 'FAIRGROUND' | 'MAZE';
 
 export type DeviceMode = 'PC' | 'MOBILE';
 
-export type Difficulty = 'NORMAL' | 'NIGHTMARE' | 'CASUAL';
+export type Difficulty = 'NORMAL' | 'HARD' | 'NIGHTMARE';
+
+export type AchievementId =
+  | 'first_trophy'
+  | 'second_trophy'
+  | 'ouch_so_painful'
+  | 'lets_get_out'
+  | 'first_blood'
+  | 'evil_friend'
+  | 'thank_you_friend'
+  | 'dont_leave_me'
+  | 'bad_job'
+  | 'useless'
+  | 'become_developer';
+
+export interface AchievementDef {
+  id: AchievementId;
+  titleId: string;
+  titleEn: string;
+  descId: string;
+  descEn: string;
+}
 
 export interface LockerItem {
   id: number | string;
@@ -173,6 +194,8 @@ export interface BotCompanionState {
   waypointWaitTimer?: number;
   targetMachineId?: number | null;
   botSkillCheckTimer?: number;
+  isCarriedByPlayer?: boolean;
+  carriedByMonster?: 'JESTY' | 'EVIL_OLIVIA';
 }
 
 export interface PlayerStats {

@@ -5,7 +5,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { GameWorld } from './game/GameWorld';
-import { GameStatus, Language, InterrogationPrompt, DeviceMode } from './types';
+import { GameStatus, Language, InterrogationPrompt, DeviceMode, Difficulty, AchievementId } from './types';
 import { MainMenuModal } from './components/MainMenuModal';
 import { HUD } from './components/HUD';
 import { InterrogationModal } from './components/InterrogationModal';
@@ -15,7 +15,9 @@ import { RestartModal } from './components/RestartModal';
 import { CarCrashCutscene } from './components/CarCrashCutscene';
 import { MazeEscapeCutscene } from './components/MazeEscapeCutscene';
 import { CheatModal } from './components/CheatModal';
-import { Volume2, VolumeX, Eye, HelpCircle, ChevronDown, ChevronUp, RotateCcw } from 'lucide-react';
+import { AchievementsModal, ACHIEVEMENTS, AchievementBadgeSvg } from './components/AchievementsModal';
+import { ShopModal, SHOP_ITEM_PRICE_KS, ShopItemId } from './components/ShopModal';
+import { Volume2, VolumeX, Eye, ChevronDown, ChevronUp, RotateCcw } from 'lucide-react';
 import { horrorAudio } from './audio/HorrorAudio';
 
 export default function App() {
@@ -34,25 +36,84 @@ export default function App() {
     return 'PC';
   });
   const [botCount, setBotCount] = useState<number>(6); // Default 6 companion bots (selectable 2 to 16)
+  const [difficulty, setDifficulty] = useState<Difficulty>('NORMAL');
   const [interrogationPrompt, setInterrogationPrompt] = useState<InterrogationPrompt | null>(null);
   const [gameOverReason, setGameOverReason] = useState<string>('');
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [showBottomDock, setShowBottomDock] = useState<boolean>(true);
   const [isRestartModalOpen, setIsRestartModalOpen] = useState<boolean>(false);
   const [isCheatModalOpen, setIsCheatModalOpen] = useState<boolean>(false);
+  const [isAchievementsOpen, setIsAchievementsOpen] = useState<boolean>(false);
+  const [isShopOpen, setIsShopOpen] = useState<boolean>(false);
+  const [lastEarnedCoins, setLastEarnedCoins] = useState<number>(100);
   const [rerenderTick, setRerenderTick] = useState<number>(0);
 
   const PISTOL_STORAGE_KEY = 'jacky_circus_pistol_count';
-  const [circusPistolCount, setCircusPistolCount] = useState<number>(() => {
+  const RADAR_STORAGE_KEY = 'jacky_monster_radar_count';
+  const GLOVES_STORAGE_KEY = 'jacky_circus_gloves_count';
+  const COINS_STORAGE_KEY = 'jacky_circus_coins';
+  const ACHIEVEMENTS_STORAGE_KEY = 'jacky_achievements_unlocked';
+
+  const readIntStorage = (key: string) => {
     try {
-      const saved = parseInt(localStorage.getItem(PISTOL_STORAGE_KEY) || '0', 10);
+      const saved = parseInt(localStorage.getItem(key) || '0', 10);
       return Number.isFinite(saved) && saved > 0 ? saved : 0;
     } catch {
       return 0;
     }
-  });
+  };
+
+  const [circusPistolCount, setCircusPistolCount] = useState<number>(() => readIntStorage(PISTOL_STORAGE_KEY));
   const circusPistolCountRef = useRef<number>(circusPistolCount);
+  const [monsterRadarCount, setMonsterRadarCount] = useState<number>(() => readIntStorage(RADAR_STORAGE_KEY));
+  const monsterRadarCountRef = useRef<number>(monsterRadarCount);
+  const [circusGlovesCount, setCircusGlovesCount] = useState<number>(() => readIntStorage(GLOVES_STORAGE_KEY));
+  const circusGlovesCountRef = useRef<number>(circusGlovesCount);
+  const [circusCoins, setCircusCoins] = useState<number>(() => readIntStorage(COINS_STORAGE_KEY));
+  const circusCoinsRef = useRef<number>(circusCoins);
   const victoryRewardGrantedRef = useRef<boolean>(false);
+
+  const [unlockedAchievements, setUnlockedAchievements] = useState<AchievementId[]>(() => {
+    try {
+      const raw = localStorage.getItem(ACHIEVEMENTS_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const unlockedAchievementsRef = useRef<AchievementId[]>(unlockedAchievements);
+
+  const [achievementToastQueue, setAchievementToastQueue] = useState<AchievementId[]>([]);
+  const achievementToast = achievementToastQueue[0] ?? null;
+  const toastTimerRef = useRef<number | null>(null);
+
+  const scheduleToastShift = () => {
+    if (toastTimerRef.current !== null) return;
+    toastTimerRef.current = window.setTimeout(() => {
+      toastTimerRef.current = null;
+      setAchievementToastQueue((prev) => {
+        const rest = prev.slice(1);
+        if (rest.length > 0) {
+          window.setTimeout(() => scheduleToastShift(), 50);
+        }
+        return rest;
+      });
+    }, 3800);
+  };
+
+  const unlockAchievement = (id: AchievementId) => {
+    if (unlockedAchievementsRef.current.includes(id)) return;
+    const next = [...unlockedAchievementsRef.current, id];
+    unlockedAchievementsRef.current = next;
+    setUnlockedAchievements(next);
+    try {
+      localStorage.setItem(ACHIEVEMENTS_STORAGE_KEY, JSON.stringify(next));
+    } catch {}
+    horrorAudio.playKeyCollectChime();
+    setAchievementToastQueue((prev) => [...prev, id]);
+    scheduleToastShift();
+  };
 
   const updatePistolInventory = (nextCount: number) => {
     const safeCount = Math.max(0, nextCount);
@@ -66,9 +127,73 @@ export default function App() {
     }
   };
 
+  const updateRadarInventory = (nextCount: number) => {
+    const safeCount = Math.max(0, nextCount);
+    monsterRadarCountRef.current = safeCount;
+    setMonsterRadarCount(safeCount);
+    try {
+      localStorage.setItem(RADAR_STORAGE_KEY, String(safeCount));
+    } catch {}
+    if (gameWorldRef.current) {
+      gameWorldRef.current.monsterRadarCount = safeCount;
+    }
+  };
+
+  const updateGlovesInventory = (nextCount: number) => {
+    const safeCount = Math.max(0, nextCount);
+    circusGlovesCountRef.current = safeCount;
+    setCircusGlovesCount(safeCount);
+    try {
+      localStorage.setItem(GLOVES_STORAGE_KEY, String(safeCount));
+    } catch {}
+    if (gameWorldRef.current) {
+      gameWorldRef.current.circusGlovesCount = safeCount;
+    }
+  };
+
+  const updateCircusCoins = (nextCoins: number) => {
+    const safeCoins = Math.max(0, nextCoins);
+    circusCoinsRef.current = safeCoins;
+    setCircusCoins(safeCoins);
+    try {
+      localStorage.setItem(COINS_STORAGE_KEY, String(safeCoins));
+    } catch {}
+  };
+
+  const handleBuyShopItem = (item: ShopItemId) => {
+    if (circusCoinsRef.current < SHOP_ITEM_PRICE_KS) return;
+    updateCircusCoins(circusCoinsRef.current - SHOP_ITEM_PRICE_KS);
+    horrorAudio.playBoxCollectChime();
+    if (item === 'monster_radar') {
+      updateRadarInventory(monsterRadarCountRef.current + 1);
+    } else if (item === 'circus_pistol') {
+      updatePistolInventory(circusPistolCountRef.current + 1);
+    } else if (item === 'circus_gloves') {
+      updateGlovesInventory(circusGlovesCountRef.current + 1);
+    }
+  };
+
   const grantCircusPistolReward = () => {
+    const gw = gameWorldRef.current;
+    const activeDifficulty = gw?.difficulty || difficultyRef.current;
+    if (activeDifficulty === 'HARD' || activeDifficulty === 'NIGHTMARE') {
+      unlockAchievement('second_trophy');
+    } else {
+      unlockAchievement('first_trophy');
+    }
+    if (
+      gw &&
+      !gw.playerHelpedCollectBox &&
+      !gw.playerHelpedRepairMachine &&
+      !gw.playerFreedBotInPrison
+    ) {
+      unlockAchievement('useless');
+    }
     if (victoryRewardGrantedRef.current) return;
     victoryRewardGrantedRef.current = true;
+    const coinsAward = activeDifficulty === 'NIGHTMARE' ? 500 : activeDifficulty === 'HARD' ? 300 : 100;
+    setLastEarnedCoins(coinsAward);
+    updateCircusCoins(circusCoinsRef.current + coinsAward);
     updatePistolInventory(circusPistolCountRef.current + 1);
   };
 
@@ -78,12 +203,23 @@ export default function App() {
     }
   }, [deviceMode]);
 
+  const difficultyRef = useRef<Difficulty>(difficulty);
+  useEffect(() => {
+    difficultyRef.current = difficulty;
+    if (gameWorldRef.current) {
+      gameWorldRef.current.setDifficulty(difficulty);
+    }
+  }, [difficulty]);
+
   // Initialize Three.js GameWorld
   useEffect(() => {
     if (!mountRef.current) return;
 
     const gw = new GameWorld(mountRef.current, botCount);
+    gw.setDifficulty(difficulty);
     gw.circusPistolCount = circusPistolCountRef.current;
+    gw.monsterRadarCount = monsterRadarCountRef.current;
+    gw.circusGlovesCount = circusGlovesCountRef.current;
     gameWorldRef.current = gw;
 
     // Connect callbacks
@@ -94,6 +230,18 @@ export default function App() {
 
     gw.onPistolCountChange = (newCount: number) => {
       updatePistolInventory(newCount);
+    };
+
+    gw.onRadarCountChange = (newCount: number) => {
+      updateRadarInventory(newCount);
+    };
+
+    gw.onGlovesCountChange = (newCount: number) => {
+      updateGlovesInventory(newCount);
+    };
+
+    gw.onAchievementUnlocked = (id: AchievementId) => {
+      unlockAchievement(id);
     };
 
     gw.onCheatMenuOpened = () => {
@@ -165,7 +313,10 @@ export default function App() {
     const gw = gameWorldRef.current;
     if (gw) {
       gw.deviceMode = deviceMode;
+      gw.difficulty = difficulty;
       gw.circusPistolCount = circusPistolCountRef.current;
+      gw.monsterRadarCount = monsterRadarCountRef.current;
+      gw.circusGlovesCount = circusGlovesCountRef.current;
       gw.restartGame(botCount);
       gw.gameStatus = 'PLAYING';
       if (deviceMode === 'PC') {
@@ -195,7 +346,10 @@ export default function App() {
     const gw = gameWorldRef.current;
     if (gw) {
       gw.deviceMode = deviceMode;
+      gw.difficulty = difficulty;
       gw.circusPistolCount = circusPistolCountRef.current;
+      gw.monsterRadarCount = monsterRadarCountRef.current;
+      gw.circusGlovesCount = circusGlovesCountRef.current;
       gw.restartGame(botCount);
       gw.gameStatus = 'PLAYING';
       if (deviceMode === 'PC') {
@@ -215,7 +369,10 @@ export default function App() {
     victoryRewardGrantedRef.current = false;
     const gw = gameWorldRef.current;
     if (gw) {
+      gw.difficulty = difficulty;
       gw.circusPistolCount = circusPistolCountRef.current;
+      gw.monsterRadarCount = monsterRadarCountRef.current;
+      gw.circusGlovesCount = circusGlovesCountRef.current;
       gw.returnToMenu(botCount);
     }
     setIsRestartModalOpen(false);
@@ -326,12 +483,67 @@ export default function App() {
           setBotCount={setBotCount}
           deviceMode={deviceMode}
           setDeviceMode={setDeviceMode}
+          difficulty={difficulty}
+          setDifficulty={setDifficulty}
           language={language}
           setLanguage={setLanguage}
+          circusCoins={circusCoins}
+          monsterRadarCount={monsterRadarCount}
           circusPistolCount={circusPistolCount}
+          circusGlovesCount={circusGlovesCount}
+          unlockedAchievementsCount={unlockedAchievements.length}
+          totalAchievementsCount={ACHIEVEMENTS.length}
+          onOpenAchievements={() => setIsAchievementsOpen(true)}
+          onOpenShop={() => setIsShopOpen(true)}
           onStartGame={handleStartGame}
         />
       )}
+
+      {/* 3.5 ACHIEVEMENTS MODAL */}
+      {isAchievementsOpen && (
+        <AchievementsModal
+          language={language}
+          unlockedIds={unlockedAchievements}
+          onClose={() => setIsAchievementsOpen(false)}
+        />
+      )}
+
+      {/* 3.55 TOKO OLIVIA THE JESTER WOMAN */}
+      {isShopOpen && (
+        <ShopModal
+          language={language}
+          circusCoins={circusCoins}
+          monsterRadarCount={monsterRadarCount}
+          circusPistolCount={circusPistolCount}
+          circusGlovesCount={circusGlovesCount}
+          onBuyItem={handleBuyShopItem}
+          onClose={() => setIsShopOpen(false)}
+        />
+      )}
+
+      {/* 3.6 LIVE ACHIEVEMENT UNLOCKED TOAST */}
+      {achievementToast && (() => {
+        const def = ACHIEVEMENTS.find((a) => a.id === achievementToast);
+        if (!def) return null;
+        return (
+          <div className="fixed top-6 right-6 z-[70] pointer-events-none max-w-xs w-full animate-bounce">
+            <div className="bg-stone-950/95 border-2 border-amber-400 rounded-xl p-3 shadow-[0_0_30px_rgba(245,158,11,0.5)] flex items-center gap-3">
+              <AchievementBadgeSvg id={def.id} unlocked={true} size={46} />
+              <div className="min-w-0">
+                <div className="text-[10px] font-mono font-black uppercase tracking-widest text-amber-400">
+                  🏆 {language === 'id' ? 'ACHIEVEMENT TERBUKA!' : 'ACHIEVEMENT UNLOCKED!'}
+                </div>
+                <div className="text-sm font-black text-white truncate">
+                  {language === 'id' ? def.titleId : def.titleEn}
+                </div>
+                <div className="text-[11px] text-stone-300 leading-tight">
+                  {language === 'id' ? def.descId : def.descEn}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 4. JACKY INTERROGATION / BETRAYAL MODAL */}
       {gameStatus === 'INTERROGATION' && interrogationPrompt && (
@@ -357,11 +569,14 @@ export default function App() {
       {(gameStatus === 'VICTORY' || gameStatus === 'MAZE_VICTORY') && gameWorldRef.current && (
         <VictoryModal
           language={language}
+          difficulty={gameWorldRef.current.difficulty}
           boxesCollected={gameWorldRef.current.objectives.boxesCollected}
           survivingBots={gameWorldRef.current.botManager.getAliveBotCount()}
           totalBots={botCount}
           isMazeVictory={gameStatus === 'MAZE_VICTORY'}
           circusPistolCount={circusPistolCount}
+          earnedCoins={lastEarnedCoins}
+          circusCoins={circusCoins}
           onRestart={handleRestart}
           onReturnToMenu={handleReturnToMenu}
         />
@@ -377,11 +592,14 @@ export default function App() {
         />
       )}
 
-      {/* 6.6 SECRET CARNIVAL CHEAT MODAL (3 CHEAT OPTIONS) */}
+      {/* 6.6 SECRET CARNIVAL CHEAT MODAL (5 CHEAT OPTIONS) */}
       {isCheatModalOpen && gameWorldRef.current && (
         <CheatModal
           language={language}
           circusPistolCount={circusPistolCount}
+          infiniteStaminaActive={Boolean(gameWorldRef.current.infiniteStaminaCheat)}
+          fastRunActive={Boolean(gameWorldRef.current.fastRunCheat)}
+          onDeveloperUnlocked={() => unlockAchievement('become_developer')}
           onGivePistol={() => {
             updatePistolInventory(circusPistolCountRef.current + 1);
             horrorAudio.playKeyCollectChime();
@@ -418,6 +636,22 @@ export default function App() {
                   gw.renderer.domElement.requestPointerLock?.();
                 } catch {}
               }
+            }
+          }}
+          onActivateInfiniteStamina={() => {
+            const gw = gameWorldRef.current;
+            if (gw) {
+              gw.activateInfiniteStaminaCheat();
+              horrorAudio.playKeyCollectChime();
+              setRerenderTick((t) => (t + 1) % 1000);
+            }
+          }}
+          onToggleFastRun={() => {
+            const gw = gameWorldRef.current;
+            if (gw) {
+              gw.toggleFastRunCheat();
+              horrorAudio.playKeyCollectChime();
+              setRerenderTick((t) => (t + 1) % 1000);
             }
           }}
           onClose={() => {

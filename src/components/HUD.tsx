@@ -30,6 +30,7 @@ import {
   Volume2,
   Eye,
   Hand,
+  HandHeart,
   Footprints,
   Crosshair
 } from 'lucide-react';
@@ -362,6 +363,62 @@ export const HUD: React.FC<Props> = ({ gameWorld, language, deviceMode, onOpenRe
         </div>
       )}
 
+      {/* 2.76 CARRIED COMPANION BOT BANNER (SARUNG TANGAN SIRKUS - 10s CARRY) */}
+      {gameWorld.carriedBot && (
+        <div className="absolute top-44 left-6 z-40 max-w-xs w-full">
+          <div className="bg-emerald-950/95 border-2 border-emerald-400 rounded-xl p-3 shadow-2xl text-white">
+            <div className="flex items-center justify-between text-xs font-mono font-black text-emerald-300 mb-1">
+              <div className="flex items-center gap-1.5">
+                <HandHeart className="w-4 h-4 text-emerald-300 animate-bounce" />
+                <span>{isId ? 'SARUNG TANGAN SIRKUS' : 'CIRCUS GLOVES'}</span>
+              </div>
+              <span className="text-emerald-200 text-sm">
+                {gameWorld.carriedBot.timer.toFixed(1)}s
+              </span>
+            </div>
+            <p className="text-xs font-bold text-emerald-100 leading-tight">
+              {isId
+                ? `🧤 Menggendong ${gameWorld.carriedBot.botName.toUpperCase()} — Aman dari monster! ([T] Taruh)`
+                : `🧤 Carrying ${gameWorld.carriedBot.botName.toUpperCase()} — Safe from monsters! ([T] Drop)`}
+            </p>
+            <div className="w-full bg-stone-950 h-1.5 rounded-full mt-2 overflow-hidden border border-emerald-800">
+              <div
+                className="h-full bg-gradient-to-r from-emerald-400 to-lime-300 transition-all duration-100"
+                style={{ width: `${Math.max(0, (gameWorld.carriedBot.timer / 10.0) * 100)}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2.77 MONSTER RADAR ACTIVE BANNER (10 SECONDS THROUGH-WALLS HIGHLIGHT) */}
+      {gameWorld.monsterRadar && gameWorld.monsterRadar.active && (
+        <div className="absolute top-44 right-6 z-40 max-w-xs w-full">
+          <div className="bg-rose-950/95 border-2 border-rose-400 rounded-xl p-3 shadow-2xl text-white">
+            <div className="flex items-center justify-between text-xs font-mono font-black text-rose-300 mb-1">
+              <div className="flex items-center gap-1.5">
+                <Radio className="w-4 h-4 text-rose-400 animate-spin" />
+                <span>{isId ? 'MONSTER RADAR AKTIF' : 'MONSTER RADAR ACTIVE'}</span>
+              </div>
+              <span className="text-rose-200 text-sm">
+                {gameWorld.monsterRadar.timer.toFixed(1)}s
+              </span>
+            </div>
+            <p className="text-xs font-bold text-rose-100 leading-tight">
+              {isId
+                ? `📡 ${gameWorld.monsterRadar.monsterName} — ${gameWorld.monsterRadar.distance.toFixed(0)}m (${gameWorld.monsterRadar.zoneName})`
+                : `📡 ${gameWorld.monsterRadar.monsterName} — ${gameWorld.monsterRadar.distance.toFixed(0)}m (${gameWorld.monsterRadar.zoneName})`}
+            </p>
+            <div className="w-full bg-stone-950 h-1.5 rounded-full mt-2 overflow-hidden border border-rose-800">
+              <div
+                className="h-full bg-gradient-to-r from-rose-500 to-amber-400 transition-all duration-100"
+                style={{ width: `${Math.max(0, (gameWorld.monsterRadar.timer / 10.0) * 100)}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 2.78 JESTY 5-SECOND CAPTURE/DEATH LOCATION REVEAL (CHAPTER 2) */}
       {chapter === 'MAZE' && gameWorld.jesty && (gameWorld.jesty.info.revealedTimer ?? 0) > 0 && (
         <div className="absolute top-20 right-6 z-40 max-w-xs w-full animate-pulse">
@@ -549,9 +606,27 @@ export const HUD: React.FC<Props> = ({ gameWorld, language, deviceMode, onOpenRe
           </div>
         )}
 
-        {/* Current Zone Tag */}
-        <div className="px-3 py-0.5 rounded-full bg-stone-950/90 border border-stone-800 text-[11px] text-stone-400 font-mono">
-          📍 {chapter === 'MAZE' ? (isId ? 'Labirin Sirkus & Penjara Besi' : 'Circus Labyrinth & Prison') : (isId ? currentZone.nameId : currentZone.nameEn)}
+        {/* Current Zone & Difficulty Tag */}
+        <div className="px-3 py-0.5 rounded-full bg-stone-950/90 border border-stone-800 text-[11px] text-stone-400 font-mono flex items-center gap-2">
+          <span>
+            📍 {chapter === 'MAZE' ? (isId ? 'Labirin Sirkus & Penjara Besi' : 'Circus Labyrinth & Prison') : (isId ? currentZone.nameId : currentZone.nameEn)}
+          </span>
+          <span className="text-stone-700">•</span>
+          <span
+            className={
+              gameWorld.difficulty === 'NIGHTMARE'
+                ? 'text-fuchsia-400 font-black'
+                : gameWorld.difficulty === 'HARD'
+                ? 'text-red-400 font-black'
+                : 'text-emerald-400 font-bold'
+            }
+          >
+            {gameWorld.difficulty === 'NIGHTMARE'
+              ? '💀 NIGHTMARE'
+              : gameWorld.difficulty === 'HARD'
+              ? '🔥 HARD'
+              : 'NORMAL'}
+          </span>
         </div>
       </div>
 
@@ -697,7 +772,7 @@ export const HUD: React.FC<Props> = ({ gameWorld, language, deviceMode, onOpenRe
         <div className="absolute bottom-3 left-3 flex flex-col gap-1.5 z-30 pointer-events-auto">
           {/* Ultra-compact 1-row Health + Stamina Strip */}
           {(() => {
-            const isUnlimitedStamina = gameWorld.isPanicModeActive();
+            const isUnlimitedStamina = gameWorld.isStaminaUnlimited();
             return (
               <div className="flex items-center gap-1.5 bg-stone-950/90 border border-stone-800 rounded-lg px-2 py-1 shadow-xl w-[228px]">
                 <div className="flex-1">
@@ -743,32 +818,87 @@ export const HUD: React.FC<Props> = ({ gameWorld, language, deviceMode, onOpenRe
             );
           })()}
 
-          {/* Compact Mobile Pistol Sirkus button when owned (>0) */}
-          {gameWorld.circusPistolCount > 0 && !player.isHiding && !player.isImprisoned && (() => {
-            const sight = gameWorld.isMonsterInPistolSights();
-            return (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  gameWorld.fireCircusPistol();
-                }}
-                className={`w-[228px] py-1 px-2.5 rounded-lg border font-mono font-black text-[10px] flex items-center justify-between shadow-lg active:scale-95 transition-all ${
-                  sight.hit
-                    ? 'bg-cyan-500 border-white text-stone-950 animate-pulse'
-                    : 'bg-cyan-950/95 border-cyan-400 text-cyan-200'
-                }`}
-              >
-                <span className="flex items-center gap-1.5">
-                  <Crosshair className="w-3.5 h-3.5" />
-                  <span>{isId ? 'TEMBAK PISTOL SIRKUS' : 'FIRE CIRCUS PISTOL'}</span>
-                </span>
-                <span className="px-1.5 py-0.2 rounded bg-black/30">
-                  {sight.hit ? '🎯 HIT!' : `x${gameWorld.circusPistolCount}`}
-                </span>
-              </button>
-            );
-          })()}
+          {/* Compact Mobile Shop/Reward Item Buttons when owned (>0) or actively carrying */}
+          {!player.isHiding && !player.isImprisoned && (
+            <div className="flex flex-col gap-1 w-[228px]">
+              {gameWorld.circusPistolCount > 0 && (() => {
+                const sight = gameWorld.isMonsterInPistolSights();
+                return (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      gameWorld.fireCircusPistol();
+                    }}
+                    className={`w-full py-1 px-2.5 rounded-lg border font-mono font-black text-[10px] flex items-center justify-between shadow-lg active:scale-95 transition-all ${
+                      sight.hit
+                        ? 'bg-cyan-500 border-white text-stone-950 animate-pulse'
+                        : 'bg-cyan-950/95 border-cyan-400 text-cyan-200'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Crosshair className="w-3.5 h-3.5" />
+                      <span>{isId ? 'TEMBAK PISTOL SIRKUS' : 'FIRE CIRCUS PISTOL'}</span>
+                    </span>
+                    <span className="px-1.5 py-0.2 rounded bg-black/30">
+                      {sight.hit ? '🎯 HIT!' : `x${gameWorld.circusPistolCount}`}
+                    </span>
+                  </button>
+                );
+              })()}
+
+              {gameWorld.monsterRadarCount > 0 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    gameWorld.activateMonsterRadar();
+                  }}
+                  className="w-full py-1 px-2.5 rounded-lg border bg-rose-950/95 border-rose-400 text-rose-200 font-mono font-black text-[10px] flex items-center justify-between shadow-lg active:scale-95 transition-all"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Radio className="w-3.5 h-3.5" />
+                    <span>{isId ? 'MONSTER RADAR (10s)' : 'MONSTER RADAR (10s)'}</span>
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded bg-black/30">
+                    x{gameWorld.monsterRadarCount}
+                  </span>
+                </button>
+              )}
+
+              {(gameWorld.circusGlovesCount > 0 || gameWorld.carriedBot) && !player.isCarriedByJesty && (
+                <button
+                  type="button"
+                  disabled={!gameWorld.carriedBot && !gameWorld.nearbyCarryBot}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    gameWorld.toggleCarryBotGloves();
+                  }}
+                  className={`w-full py-1 px-2.5 rounded-lg border font-mono font-black text-[10px] flex items-center justify-between shadow-lg active:scale-95 transition-all ${
+                    gameWorld.carriedBot
+                      ? 'bg-emerald-500 border-white text-stone-950 animate-pulse'
+                      : gameWorld.nearbyCarryBot
+                      ? 'bg-emerald-950/95 border-emerald-400 text-emerald-200'
+                      : 'bg-stone-950/90 border-stone-700 text-stone-500 opacity-75'
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5 truncate">
+                    <HandHeart className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">
+                      {gameWorld.carriedBot
+                        ? (isId ? `TARUH ${gameWorld.carriedBot.botName.toUpperCase()}` : `DROP ${gameWorld.carriedBot.botName.toUpperCase()}`)
+                        : gameWorld.nearbyCarryBot
+                        ? (isId ? `GENDONG ${gameWorld.nearbyCarryBot.name.toUpperCase()}` : `CARRY ${gameWorld.nearbyCarryBot.name.toUpperCase()}`)
+                        : (isId ? 'SARUNG TANGAN (DEKATI BOT)' : 'GLOVES (APPROACH BOT)')}
+                    </span>
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded bg-black/30 shrink-0">
+                    {gameWorld.carriedBot ? `${gameWorld.carriedBot.timer.toFixed(0)}s` : `x${gameWorld.circusGlovesCount}`}
+                  </span>
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Analog Joystick + Small Side Action Buttons Row */}
           <div className="flex items-end gap-2">
@@ -1004,13 +1134,14 @@ export const HUD: React.FC<Props> = ({ gameWorld, language, deviceMode, onOpenRe
             </div>
           </div>
 
-          {/* Stamina Bar (Unlimited during Panic Mode when Exit Gates are Open) */}
+          {/* Stamina Bar (Unlimited during Panic Mode or Infinite Stamina Cheat) */}
           {(() => {
-            const isUnlimitedStamina = gameWorld.isPanicModeActive();
+            const isUnlimitedStamina = gameWorld.isStaminaUnlimited();
+            const isCheatOnly = gameWorld.infiniteStaminaCheat && !gameWorld.isPanicModeActive();
             return (
               <div
                 className={`bg-stone-950/95 rounded-xl p-3 shadow-2xl border ${
-                  isUnlimitedStamina ? 'border-amber-500/90' : 'border-stone-800/90'
+                  isUnlimitedStamina ? (isCheatOnly ? 'border-emerald-400/90' : 'border-amber-500/90') : 'border-stone-800/90'
                 }`}
               >
                 <div className="flex items-center justify-between mb-1.5 text-xs font-bold text-stone-300">
@@ -1018,19 +1149,23 @@ export const HUD: React.FC<Props> = ({ gameWorld, language, deviceMode, onOpenRe
                     <Zap
                       className={`w-4 h-4 ${
                         isUnlimitedStamina
-                          ? 'text-amber-400 fill-amber-400 animate-pulse'
+                          ? (isCheatOnly ? 'text-emerald-400 fill-emerald-400 animate-pulse' : 'text-amber-400 fill-amber-400 animate-pulse')
                           : 'text-cyan-400 fill-cyan-400'
                       }`}
                     />
                     <span>
                       {isUnlimitedStamina
-                        ? (isId ? 'STAMINA PANIC MODE' : 'PANIC STAMINA')
+                        ? isCheatOnly
+                          ? (isId ? 'STAMINA CHEAT (∞)' : 'CHEAT STAMINA (∞)')
+                          : (isId ? 'STAMINA PANIC MODE' : 'PANIC STAMINA')
                         : (isId ? 'STAMINA (SHIFT: LARI)' : 'STAMINA (SHIFT)')}
                     </span>
                   </div>
                   <span
                     className={`font-mono font-black ${
-                      isUnlimitedStamina ? 'text-amber-300 animate-pulse' : 'text-cyan-400'
+                      isUnlimitedStamina
+                        ? (isCheatOnly ? 'text-emerald-300 animate-pulse' : 'text-amber-300 animate-pulse')
+                        : 'text-cyan-400'
                     }`}
                   >
                     {isUnlimitedStamina ? '∞ UNLIMITED' : `${Math.round(staminaPercent)}%`}
@@ -1115,6 +1250,49 @@ export const HUD: React.FC<Props> = ({ gameWorld, language, deviceMode, onOpenRe
                 </button>
               );
             })()}
+
+            {/* Monster Radar [R] Single-use 10s monster highlight */}
+            {gameWorld.monsterRadarCount > 0 && (
+              <button
+                onClick={() => gameWorld.activateMonsterRadar()}
+                disabled={player.isHiding || Boolean(player.isImprisoned)}
+                className="px-3 py-1.5 rounded-lg border text-xs font-mono font-black flex items-center gap-1.5 shadow-md cursor-pointer pointer-events-auto transition-all bg-rose-950/95 hover:bg-rose-900 border-rose-400 text-rose-200"
+                title={isId ? 'Aktifkan Monster Radar untuk menyorot monster terdekat selama 10 detik (Sekali Pakai)' : 'Activate Monster Radar to highlight nearest monster for 10s (Single-Use)'}
+              >
+                <Radio className="w-3.5 h-3.5" />
+                <span>[R] RADAR MONSTER (x{gameWorld.monsterRadarCount})</span>
+              </button>
+            )}
+
+            {/* Sarung Tangan Sirkus [T] Single-use 10s Carry Bot */}
+            {(gameWorld.circusGlovesCount > 0 || gameWorld.carriedBot) && (
+              <button
+                onClick={() => gameWorld.toggleCarryBotGloves()}
+                disabled={
+                  player.isHiding ||
+                  Boolean(player.isImprisoned) ||
+                  Boolean(player.isCarriedByJesty) ||
+                  (!gameWorld.carriedBot && !gameWorld.nearbyCarryBot)
+                }
+                className={`px-3 py-1.5 rounded-lg border text-xs font-mono font-black flex items-center gap-1.5 shadow-md pointer-events-auto transition-all ${
+                  gameWorld.carriedBot
+                    ? 'bg-emerald-500 hover:bg-emerald-400 border-white text-stone-950 cursor-pointer animate-pulse'
+                    : gameWorld.nearbyCarryBot
+                    ? 'bg-emerald-950/95 hover:bg-emerald-900 border-emerald-400 text-emerald-200 cursor-pointer'
+                    : 'bg-stone-900/90 border-stone-700 text-stone-500 cursor-not-allowed'
+                }`}
+                title={isId ? 'Gendong teman bot terdekat selama 10 detik dengan Sarung Tangan Sirkus (Sekali Pakai)' : 'Carry nearest companion bot safely for 10s with Circus Gloves (Single-Use)'}
+              >
+                <HandHeart className="w-3.5 h-3.5" />
+                <span>
+                  {gameWorld.carriedBot
+                    ? `[T] ${isId ? 'TARUH' : 'DROP'} ${gameWorld.carriedBot.botName.toUpperCase()} (${gameWorld.carriedBot.timer.toFixed(0)}s)`
+                    : gameWorld.nearbyCarryBot
+                    ? `[T] ${isId ? 'GENDONG' : 'CARRY'} ${gameWorld.nearbyCarryBot.name.toUpperCase()} (x${gameWorld.circusGlovesCount})`
+                    : `[T] SARUNG TANGAN (x${gameWorld.circusGlovesCount})`}
+                </span>
+              </button>
+            )}
           </div>
         </div>
       )}

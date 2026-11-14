@@ -19,6 +19,14 @@ export interface MazeCell {
   walls: { north: boolean; south: boolean; east: boolean; west: boolean };
 }
 
+export interface JestyPaintingSpot {
+  x: number;
+  z: number;
+  wallX: number;
+  wallZ: number;
+  rotY: number;
+}
+
 export class CircusMaze {
   public group: THREE.Group = new THREE.Group();
   public exteriorTentGroup: THREE.Group = new THREE.Group();
@@ -30,6 +38,7 @@ export class CircusMaze {
 
   public colliders: { x: number; z: number; radius: number }[] = [];
   public lockers: LockerItem[] = [];
+  public jestyPaintings: JestyPaintingSpot[] = [];
   public exitDoorPosition: { x: number; z: number } = { x: 0, z: -204 };
   public exitDoorMesh: THREE.Group | null = null;
   public exitDoorOpened: boolean = false;
@@ -439,8 +448,10 @@ export class CircusMaze {
 
           decorCounter++;
           if (decorCounter % 5 === 0) {
-            this.mountWallDecoration(localX, wallZ + wallThickness / 2 + 0.04, 0, paintingGeo, paintingFrameGeo, paintingMats[decorCounter % 3], frameMat, graffitiGeo, graffitiMats[decorCounter % 3], decorCounter % 2 === 0);
-            this.mountWallDecoration(localX, wallZ - wallThickness / 2 - 0.04, Math.PI, paintingGeo, paintingFrameGeo, paintingMats[(decorCounter + 1) % 3], frameMat, graffitiGeo, graffitiMats[(decorCounter + 1) % 3], decorCounter % 3 === 0);
+            const varA = decorCounter % 3;
+            const varB = (decorCounter + 1) % 3;
+            this.mountWallDecoration(localX, wallZ + wallThickness / 2 + 0.04, 0, paintingGeo, paintingFrameGeo, paintingMats[varA], frameMat, graffitiGeo, graffitiMats[varA], decorCounter % 2 === 0, varA === 0);
+            this.mountWallDecoration(localX, wallZ - wallThickness / 2 - 0.04, Math.PI, paintingGeo, paintingFrameGeo, paintingMats[varB], frameMat, graffitiGeo, graffitiMats[varB], decorCounter % 3 === 0, varB === 0);
           }
         }
 
@@ -454,8 +465,10 @@ export class CircusMaze {
 
           decorCounter++;
           if (decorCounter % 6 === 0) {
-            this.mountWallDecoration(wallX + wallThickness / 2 + 0.04, localZ, Math.PI / 2, paintingGeo, paintingFrameGeo, paintingMats[decorCounter % 3], frameMat, graffitiGeo, graffitiMats[decorCounter % 3], decorCounter % 2 === 1);
-            this.mountWallDecoration(wallX - wallThickness / 2 - 0.04, localZ, -Math.PI / 2, paintingGeo, paintingFrameGeo, paintingMats[(decorCounter + 2) % 3], frameMat, graffitiGeo, graffitiMats[(decorCounter + 2) % 3], decorCounter % 3 === 1);
+            const varA = decorCounter % 3;
+            const varB = (decorCounter + 2) % 3;
+            this.mountWallDecoration(wallX + wallThickness / 2 + 0.04, localZ, Math.PI / 2, paintingGeo, paintingFrameGeo, paintingMats[varA], frameMat, graffitiGeo, graffitiMats[varA], decorCounter % 2 === 1, varA === 0);
+            this.mountWallDecoration(wallX - wallThickness / 2 - 0.04, localZ, -Math.PI / 2, paintingGeo, paintingFrameGeo, paintingMats[varB], frameMat, graffitiGeo, graffitiMats[varB], decorCounter % 3 === 1, varB === 0);
           }
         }
 
@@ -480,6 +493,11 @@ export class CircusMaze {
 
     // 5. Build 8 Carnival Lockers around the maze corridors
     this.buildMazeLockers();
+
+    // Filter Jesty portrait spots so emergence points never collide with nearby lockers or props
+    this.jestyPaintings = this.jestyPaintings.filter(
+      (spot) => !this.checkCollision(spot.x, spot.z, 0.72)
+    );
   }
 
   /**
@@ -495,7 +513,8 @@ export class CircusMaze {
     frameMat: THREE.Material,
     graffitiGeo: THREE.PlaneGeometry,
     graffitiMat: THREE.Material,
-    isPainting: boolean
+    isPainting: boolean,
+    isJestyPortrait: boolean = false
   ): void {
     const holder = new THREE.Group();
     holder.position.set(x, isPainting ? 2.35 : 1.9, z);
@@ -508,6 +527,17 @@ export class CircusMaze {
       art.position.z = 0.05;
       frame.add(art);
       holder.add(frame);
+
+      if (isJestyPortrait) {
+        const emergeDist = 1.45;
+        this.jestyPaintings.push({
+          wallX: this.worldOffsetX + x,
+          wallZ: this.worldOffsetZ + z,
+          x: this.worldOffsetX + x + Math.sin(rotY) * emergeDist,
+          z: this.worldOffsetZ + z + Math.cos(rotY) * emergeDist,
+          rotY
+        });
+      }
     } else {
       const decal = new THREE.Mesh(graffitiGeo, graffitiMat);
       holder.add(decal);
